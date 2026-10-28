@@ -17,19 +17,10 @@ class UserLlmProviderResolver
      */
     public function resolve(User $user, string $agentName): array
     {
+        $modelSelection = $this->selectedModel($user, $agentName);
+        $providerId = $modelSelection['provider'];
+        $modelId = $modelSelection['model'];
         $settings = $user->llmSettings;
-
-        if ($settings === null) {
-            throw new InvalidArgumentException('Save provider settings and approve a model before running an agent.');
-        }
-
-        $agentChoice = $settings->agent_models[$agentName] ?? null;
-        $providerId = $agentChoice['provider'] ?? $settings->provider;
-        $modelId = $agentChoice['model'] ?? $settings->model;
-        $approvedModels = $settings->approved_models ?? [];
-        $this->assertModelIsApproved($approvedModels, $providerId, $modelId);
-
-        $this->catalog->model($providerId, $modelId);
         $providerCredentials = $user->apiKeys()->where('provider', $providerId)->first();
 
         if ($providerCredentials === null) {
@@ -44,6 +35,33 @@ class UserLlmProviderResolver
                 $providerCredentials->base_url,
                 $user,
             ),
+            'model' => $modelId,
+        ];
+    }
+
+    /**
+     * Resolve only the approved model selection without constructing a provider.
+     *
+     * @return array{provider: string, model: string}
+     */
+    public function selectedModel(User $user, string $agentName): array
+    {
+        $settings = $user->llmSettings;
+
+        if ($settings === null) {
+            throw new InvalidArgumentException('Save provider settings and approve a model before running an agent.');
+        }
+
+        $agentChoice = $settings->agent_models[$agentName] ?? null;
+        $providerId = $agentChoice['provider'] ?? $settings->provider;
+        $modelId = $agentChoice['model'] ?? $settings->model;
+        $approvedModels = $settings->approved_models ?? [];
+        $this->assertModelIsApproved($approvedModels, $providerId, $modelId);
+
+        $this->catalog->model($providerId, $modelId);
+
+        return [
+            'provider' => $providerId,
             'model' => $modelId,
         ];
     }

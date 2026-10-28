@@ -21,6 +21,7 @@ const elements = {
     mobileApprovalCount: document.querySelector('#mobile-approval-count'),
     pageTitle: document.querySelector('#page-title'),
     success: document.querySelector('#global-success'),
+    taskEstimate: document.querySelector('#task-estimate'),
     taskDetail: document.querySelector('#task-detail'),
     taskForm: document.querySelector('#task-form'),
     taskList: document.querySelector('#task-list'),
@@ -32,6 +33,7 @@ const elements = {
 let apiToken = sessionStorage.getItem(TOKEN_STORAGE_KEY) || '';
 let selectedTaskId = null;
 let refreshTimer = null;
+let pendingTaskConfirmation = null;
 
 function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>"']/g, (character) => ({
@@ -140,10 +142,13 @@ function renderTaskList(tasks) {
     `).join('');
 }
 
-function renderAgentRuns(agentRuns = []) {
+function renderAgentRuns(agentRuns = [], routing = null) {
     const agentRunByName = new Map(agentRuns.map((run) => [run.agent_name, run]));
+    const agentSequence = routing?.agent_sequence?.length
+        ? routing.agent_sequence
+        : (agentRuns.length > 0 ? agentRuns.map((run) => run.agent_name) : AGENT_SEQUENCE);
 
-    return AGENT_SEQUENCE.map((agentName, index) => {
+    return agentSequence.map((agentName, index) => {
         const agentRun = agentRunByName.get(agentName);
         const status = agentRun?.status ?? 0;
         const outputText = agentRun?.output?.text;
@@ -172,6 +177,13 @@ function renderTaskDetail(task) {
     const failureMessage = failure
         ? `<div class="notice notice-error">${escapeHtml(failure)}</div>`
         : '';
+    const tokenUsage = (task.agent_runs || []).reduce(
+        (total, run) => total + Number(run.token_usage?.total_tokens || 0),
+        0,
+    );
+    const usageSummary = tokenUsage > 0
+        ? `<p class="usage-summary">Token usage: ${escapeHtml(tokenUsage.toLocaleString())}</p>`
+        : '';
 
     elements.taskDetail.innerHTML = `
         <div class="detail-header">
@@ -181,7 +193,8 @@ function renderTaskDetail(task) {
             </div>
             <span class="status-chip status-${escapeHtml(task.status)}">${escapeHtml(statusLabel(task.status))}</span>
         </div>
-        <div class="agent-timeline">${renderAgentRuns(task.agent_runs || [])}</div>
+        <div class="agent-timeline">${renderAgentRuns(task.agent_runs || [], task.routing)}</div>
+        ${usageSummary}
         ${finalResult}
         ${failureMessage}
     `;
@@ -311,16 +324,38 @@ elements.taskForm.addEventListener('submit', async (event) => {
     clearNotices();
     const submitButton = elements.taskForm.querySelector('button[type="submit"]');
     const formData = new FormData(elements.taskForm);
+    const taskData = {
+        title: String(formData.get('title') || '').trim(),
+        prompt: String(formData.get('prompt') || '').trim(),
+    };
     submitButton.disabled = true;
 
     try {
+        const isCurrentEstimateConfirmed = pendingTaskConfirmation
+            && pendingTaskConfirmation.title === taskData.title
+            && pendingTaskConfirmation.prompt === taskData.prompt;
+        if (!isCurrentEstimateConfirmed) {
+            const estimateResponse = await apiRequest('/tasks/estimate', {
+                method: 'POST',
+                body: JSON.stringify({ prompt: taskData.prompt }),
+            });
+            renderTaskEstimate(estimateResponse);
+            pendingTaskConfirmation = estimateResponse.cost_estimate.can_complete === false
+                ? null
+                : taskData;
+            submitButton.innerHTML = estimateResponse.cost_estimate.can_complete === false
+                ? 'সীমার বাইরে — prompt ছোট করুন'
+                : 'অনুমান দেখে শুরু করুন <span aria-hidden="true">→</span>';
+            return;
+        }
+
         const responseData = await apiRequest('/tasks', {
             method: 'POST',
-            body: JSON.stringify({
-                title: formData.get('title'),
-                prompt: formData.get('prompt'),
-            }),
+            body: JSON.stringify(taskData),
         });
+        pendingTaskConfirmation = null;
+        elements.taskEstimate.hidden = true;
+        submitButton.innerHTML = 'কাজ জমা দিন <span aria-hidden="true">→</span>';
         elements.taskForm.reset();
         selectedTaskId = responseData.task.id;
         await loadTasks();
@@ -331,6 +366,26 @@ elements.taskForm.addEventListener('submit', async (event) => {
         submitButton.disabled = false;
     }
 });
+
+function renderTaskEstimate(responseData) {
+    const { routing, cost_estimate: costEstimate } = responseData;
+    const costLine = costEstimate.status === 'available'
+        ? `সর্বোচ্চ আনুমানিক খরচ: ${costEstimate.maximum_cost} ${costEstimate.currency}`
+        : `টাকার হিসাব নেই: ${costEstimate.reason}`;
+
+    elements.taskEstimate.textContent = [
+        `পথ: ${routing.strategy === 'multi_agent' ? 'একাধিক agent' : 'একটি agent'} (${routing.agent_sequence.join(' → ')})`,
+        `কেন: ${routing.reason}`,
+        `সর্বোচ্চ token: ${costEstimate.estimated_tokens ?? 'হিসাব করা যায়নি'} / ${costEstimate.maximum_tokens}`,
+        costEstimate.can_complete === false
+            ? 'এই prompt-এর জন্য token সীমায় উত্তর দেওয়ার জায়গা নেই; prompt ছোট করে আবার অনুমান করুন।'
+            : '',
+        costLine,
+        'হিসাবটি সর্বোচ্চ token budget ও আনুমানিক input token-এর উপর ভিত্তি করে; provider-এর প্রকৃত usage ভিন্ন হতে পারে।',
+        'এখন আবার বোতাম চাপলে কাজ শুরু হবে।',
+    ].join('\n');
+    elements.taskEstimate.hidden = false;
+}
 
 elements.taskList.addEventListener('click', async (event) => {
     const taskButton = event.target.closest('[data-task-id]');

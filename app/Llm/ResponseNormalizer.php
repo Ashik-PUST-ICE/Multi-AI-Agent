@@ -60,8 +60,8 @@ final class ResponseNormalizer
             $textParts === [] ? null : implode("\n", $textParts),
             $toolCalls,
             $this->usage([
-                'prompt_tokens' => Arr::get($response, 'usage.input_tokens', 0),
-                'completion_tokens' => Arr::get($response, 'usage.output_tokens', 0),
+                'prompt_tokens' => Arr::get($response, 'usage.input_tokens'),
+                'completion_tokens' => Arr::get($response, 'usage.output_tokens'),
             ]),
             $toolCalls !== []
                 ? 'tool_calls'
@@ -100,9 +100,9 @@ final class ResponseNormalizer
             $textParts === [] ? null : implode("\n", $textParts),
             $toolCalls,
             $this->usage([
-                'prompt_tokens' => $usageMetadata['promptTokenCount'] ?? 0,
-                'completion_tokens' => $usageMetadata['candidatesTokenCount'] ?? 0,
-                'total_tokens' => $usageMetadata['totalTokenCount'] ?? 0,
+                'prompt_tokens' => $usageMetadata['promptTokenCount'] ?? null,
+                'completion_tokens' => $usageMetadata['candidatesTokenCount'] ?? null,
+                'total_tokens' => $usageMetadata['totalTokenCount'] ?? null,
             ]),
             $toolCalls !== []
                 ? 'tool_calls'
@@ -117,9 +117,12 @@ final class ResponseNormalizer
     private function usage(array $usage): array
     {
         $normalized = [];
-        $inputTokens = $usage['prompt_tokens'] ?? 0;
-        $outputTokens = $usage['completion_tokens'] ?? 0;
-        $totalTokens = $usage['total_tokens'] ?? ($inputTokens + $outputTokens);
+        $inputTokens = $usage['prompt_tokens'] ?? null;
+        $outputTokens = $usage['completion_tokens'] ?? null;
+        $totalTokens = $usage['total_tokens']
+            ?? (is_numeric($inputTokens) && is_numeric($outputTokens)
+                ? (int) $inputTokens + (int) $outputTokens
+                : null);
 
         if (is_numeric($inputTokens)) {
             $normalized['input_tokens'] = (int) $inputTokens;

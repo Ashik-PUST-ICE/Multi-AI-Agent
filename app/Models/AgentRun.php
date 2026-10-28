@@ -18,6 +18,7 @@ class AgentRun extends Model
         'status',
         'input',
         'output',
+        'token_usage',
         'error_message',
         'started_at',
         'completed_at',
@@ -29,6 +30,7 @@ class AgentRun extends Model
             'status' => 'integer',
             'input' => 'array',
             'output' => 'array',
+            'token_usage' => 'array',
             'started_at' => 'datetime',
             'completed_at' => 'datetime',
         ];

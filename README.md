@@ -66,6 +66,7 @@ Paste the returned token into the dashboard's API token field. Never paste a tok
 | Method | Endpoint | Purpose |
 |---|---|---|
 | `GET` | `/api/v1/tasks` | List the authenticated user's tasks |
+| `POST` | `/api/v1/tasks/estimate` | Preview routing, token ceiling, and available user-entered price estimates |
 | `POST` | `/api/v1/tasks` | Create and queue a sandbox task |
 | `GET` | `/api/v1/tasks/{task}` | View task and agent-run status |
 | `GET` | `/api/v1/approvals` | List the user's pending tool approvals |
@@ -79,7 +80,11 @@ Paste the returned token into the dashboard's API token field. Never paste a tok
 
 Task submission accepts `title` and `prompt`. New tasks run in sandbox mode. Sensitive live tools require owner approval for the exact tool input; approval requests expire and are rejected when expired. Live web search remains disabled until its security adapter is implemented.
 
-Agent specifications define role, schemas, permitted tools, trust metadata, token/step/timeout limits, stop conditions, and success criteria. Agent-to-agent handoffs use versioned structured envelopes. Invalid agent output gets one schema-correction attempt and fails if it remains invalid. Admin specification routes require the Spatie `agent_specs.manage` permission; model choices still come only from the user's approved settings.
+The complexity router sends a request to one agent by default and selects the four-agent pipeline only for an explicitly combined request. The web client displays the route and budget estimate before requiring a second submit to start. Per-agent and per-task token ceilings are hard limits; estimated input that leaves no room for a response is rejected. Provider-reported usage is stored per agent run, with a conservative text-based estimate when a provider omits usage metadata.
+
+Users may optionally submit `model_pricing` entries with provider, model, currency, and input/output cost per million tokens to `PUT /api/v1/llm/settings`. Rates are accepted only for approved models. The estimate endpoint reports cost as unavailable when a selected model lacks a rate or route currencies differ; it never substitutes invented prices.
+
+Agent specifications define role, schemas, permitted tools, trust metadata, token/step/timeout limits, stop conditions, and success criteria. Agent-to-agent handoffs use versioned structured envelopes and only the context required for the next stage. Invalid agent output gets one schema-correction attempt and fails if it remains invalid. Admin specification routes require the Spatie `agent_specs.manage` permission; model choices still come only from the user's approved settings.
 
 LLM provider, model, timeout, and tool-call settings are controlled by application settings/configuration. User API keys are encrypted at rest; never add provider credentials to source code or commit them.
 

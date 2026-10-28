@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Agents\AgentMessageEnvelope;
 use App\Agents\AgentRegistry;
+use App\Agents\ComplexityRouter;
 use App\Jobs\RunAgentJob;
 use App\Models\AgentRun;
 use App\Models\Task;
@@ -31,6 +32,8 @@ class OrchestratorService
 
     public function __construct(
         private readonly AgentRegistry $agentRegistry,
+        private readonly ComplexityRouter $complexityRouter,
+        private readonly TaskCostEstimator $taskCostEstimator,
     ) {}
 
     /**
@@ -38,20 +41,38 @@ class OrchestratorService
      */
     public function submit(User $user, array $data): JsonResponse
     {
-        $task = DB::transaction(function () use ($user, $data): Task {
+        $routing = $this->complexityRouter->route($data['prompt']);
+        $costEstimate = $this->taskCostEstimator->estimate(
+            $user,
+            $data['prompt'],
+            $routing['agent_sequence'],
+        );
+
+        if (($costEstimate['can_complete'] ?? true) === false) {
+            return $this->error(
+                'The estimated input leaves no room for an agent response within the configured token budget.',
+                422,
+            );
+        }
+
+        $task = DB::transaction(function () use ($user, $data, $routing, $costEstimate): Task {
             $task = $user->tasks()->create([
                 'title' => $data['title'],
                 'description' => $data['prompt'],
-                'input' => ['prompt' => $data['prompt']],
+                'input' => [
+                    'prompt' => $data['prompt'],
+                    'routing' => $routing,
+                    'cost_estimate' => $costEstimate,
+                ],
                 'status' => TASK_STATUS_PENDING,
                 'mode' => TASK_MODE_SANDBOX,
             ]);
 
             $firstAgentRun = $task->agentRuns()->create([
-                'agent_name' => self::AGENT_SEQUENCE[0],
+                'agent_name' => $routing['agent_sequence'][0],
                 'input' => (new AgentMessageEnvelope(
                     'user',
-                    self::AGENT_SEQUENCE[0],
+                    $routing['agent_sequence'][0],
                     $task->id,
                     'task.created',
                     [
@@ -60,6 +81,17 @@ class OrchestratorService
                     ],
                 ))->toArray(),
                 'status' => AGENT_RUN_STATUS_PENDING,
+            ]);
+
+            $task->runEvents()->create([
+                'agent_run_id' => $firstAgentRun->id,
+                'event_type' => 'task.complexity_routed',
+                'sequence' => 1,
+                'payload' => [
+                    ...$routing,
+                    'cost_estimate' => $costEstimate,
+                ],
+                'occurred_at' => now(),
             ]);
 
             RunAgentJob::dispatch(
@@ -71,10 +103,28 @@ class OrchestratorService
         });
 
         return $this->success(
-            ['task' => $this->taskData($task)],
+            [
+                'task' => $this->taskData($task),
+                'cost_estimate' => $costEstimate,
+            ],
             CREATED_SUCCESSFULLY,
             202,
         );
+    }
+
+    public function estimate(User $user, string $prompt): JsonResponse
+    {
+        $routing = $this->complexityRouter->route($prompt);
+        $costEstimate = $this->taskCostEstimator->estimate(
+            $user,
+            $prompt,
+            $routing['agent_sequence'],
+        );
+
+        return $this->success([
+            'routing' => $routing,
+            'cost_estimate' => $costEstimate,
+        ]);
     }
 
     public function show(User $user, int $taskId): JsonResponse
@@ -127,7 +177,7 @@ class OrchestratorService
                 'error_message' => null,
             ]);
 
-            $nextAgentName = $this->nextAgentName($agentRun->agent_name);
+            $nextAgentName = $this->nextAgentName($task, $agentRun->agent_name);
 
             if ($nextAgentName === null) {
                 $completedRuns = $task->agentRuns()->orderBy('id')->get();
@@ -163,17 +213,32 @@ class OrchestratorService
         });
     }
 
-    private function nextAgentName(string $currentAgentName): ?string
+    private function nextAgentName(Task $task, string $currentAgentName): ?string
     {
-        $currentIndex = array_search($currentAgentName, self::AGENT_SEQUENCE, true);
+        $agentSequence = $this->agentSequence($task);
+        $currentIndex = array_search($currentAgentName, $agentSequence, true);
 
         if ($currentIndex === false) {
-            throw new InvalidArgumentException("Agent [{$currentAgentName}] is not in the orchestration sequence.");
+            throw new InvalidArgumentException("Agent [{$currentAgentName}] is not in the task execution route.");
         }
 
         $nextIndex = $currentIndex + 1;
 
-        return self::AGENT_SEQUENCE[$nextIndex] ?? null;
+        return $agentSequence[$nextIndex] ?? null;
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function agentSequence(Task $task): array
+    {
+        $agentSequence = $task->input['routing']['agent_sequence'] ?? self::AGENT_SEQUENCE;
+
+        if (! is_array($agentSequence) || $agentSequence === []) {
+            throw new RuntimeException('The task complexity route is invalid.');
+        }
+
+        return array_values($agentSequence);
     }
 
     /**
@@ -195,12 +260,12 @@ class OrchestratorService
             ],
             'Writer' => [
                 'orchestration_plan' => $outputs['Orchestrator']['text'] ?? '',
-                'research' => $outputs['Research'] ?? [],
+                'research' => $outputs['Research']['text'] ?? '',
             ],
             'Reviewer' => [
                 'original_task' => $prompt,
-                'research' => $outputs['Research'] ?? [],
-                'draft' => $outputs['Writer'] ?? [],
+                'research' => $outputs['Research']['text'] ?? '',
+                'draft' => $outputs['Writer']['text'] ?? '',
             ],
             default => throw new InvalidArgumentException("Agent [{$agentName}] cannot be dispatched by the orchestrator."),
         };
@@ -223,8 +288,12 @@ class OrchestratorService
             $agentOutputs[$completedRun->agent_name] = $completedRun->output ?? [];
         }
 
+        $singleAgentAnswer = $completedRuns->count() === 1
+            ? ($completedRuns->first()?->output['text'] ?? '')
+            : '';
+
         return [
-            'answer' => $agentOutputs['Writer']['text'] ?? '',
+            'answer' => $agentOutputs['Writer']['text'] ?? $singleAgentAnswer,
             'plan' => $agentOutputs['Orchestrator']['text'] ?? '',
             'research' => $agentOutputs['Research'] ?? [],
             'review' => $agentOutputs['Reviewer'] ?? [],
@@ -248,6 +317,9 @@ class OrchestratorService
             'completed_at',
             'created_at',
         ]);
+        $taskInput = $task->input ?? [];
+        $taskData['routing'] = $taskInput['routing'] ?? null;
+        $taskData['cost_estimate'] = $taskInput['cost_estimate'] ?? null;
 
         if ($includeRuns) {
             $taskData['agent_runs'] = $task->agentRuns->map(static fn (AgentRun $agentRun): array => $agentRun->only([
@@ -255,6 +327,7 @@ class OrchestratorService
                 'agent_name',
                 'status',
                 'output',
+                'token_usage',
                 'error_message',
                 'started_at',
                 'completed_at',

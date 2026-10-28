@@ -59,7 +59,7 @@
                         <div>
                             <p class="eyebrow">কাজের জায়গা</p>
                             <h2 id="tasks-heading">নতুন কাজ শুরু করুন</h2>
-                            <p class="section-description">আপনার কাজ sandbox-এ চারটি agent ধাপে ধাপে সম্পন্ন করবে।</p>
+                            <p class="section-description">আপনার কাজ sandbox-এ উপযুক্ত একটি বা একাধিক agent দিয়ে সম্পন্ন হবে।</p>
                         </div>
                         <span class="mode-badge"><span></span> Sandbox mode</span>
                     </div>
@@ -73,6 +73,7 @@
                             <span>কোনো live action চালানো হবে না।</span>
                             <button class="button button-primary" type="submit">কাজ জমা দিন <span aria-hidden="true">→</span></button>
                         </div>
+                        <div class="task-estimate" id="task-estimate" role="status" hidden></div>
                     </form>
 
                     <div class="list-heading">

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\CreateTaskRequest;
+use App\Http\Requests\Api\EstimateTaskRequest;
 use App\Services\OrchestratorService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -20,6 +21,14 @@ class TaskController extends Controller
         $validatedData = $request->validated();
 
         return $this->orchestratorService->submit($user, $validatedData);
+    }
+
+    public function estimate(EstimateTaskRequest $request): JsonResponse
+    {
+        return $this->orchestratorService->estimate(
+            $request->user(),
+            $request->validated('prompt'),
+        );
     }
 
     public function index(Request $request): JsonResponse

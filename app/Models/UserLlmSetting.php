@@ -15,6 +15,7 @@ class UserLlmSetting extends Model
         'agent_models',
         'fallback_provider',
         'fallback_model',
+        'model_pricing',
     ];
 
     protected function casts(): array
@@ -22,6 +23,7 @@ class UserLlmSetting extends Model
         return [
             'approved_models' => 'array',
             'agent_models' => 'array',
+            'model_pricing' => 'array',
         ];
     }
 

@@ -50,6 +50,7 @@ class ProviderSettingsService
                 'agent_models',
                 'fallback_provider',
                 'fallback_model',
+                'model_pricing',
             ]),
             'keys' => $keyStatuses,
             'catalog' => $this->catalog->publicCatalog(),
@@ -77,6 +78,14 @@ class ProviderSettingsService
             }
 
             $agentModels = $this->normalizeAgentModels($data['agent_models'] ?? [], $approvedModels);
+            $existingPricing = $user->llmSettings()->first()?->model_pricing ?? [];
+            $pricingData = array_key_exists('model_pricing', $data)
+                ? $data['model_pricing']
+                : $this->retainApprovedModelPricing($existingPricing, $approvedModels);
+            $modelPricing = $this->normalizeModelPricing(
+                $pricingData,
+                $approvedModels,
+            );
 
             $settings = $user->llmSettings()->updateOrCreate([], [
                 'provider' => $providerId,
@@ -85,6 +94,7 @@ class ProviderSettingsService
                 'agent_models' => $agentModels,
                 'fallback_provider' => $fallbackProvider,
                 'fallback_model' => $fallbackModel,
+                'model_pricing' => $modelPricing,
             ]);
         } catch (InvalidArgumentException $exception) {
             return $this->error($exception->getMessage());
@@ -97,6 +107,7 @@ class ProviderSettingsService
             'agent_models',
             'fallback_provider',
             'fallback_model',
+            'model_pricing',
         ]);
 
         return $this->success(
@@ -247,16 +258,40 @@ class ProviderSettingsService
      */
     private function assertApprovedModel(array $approvedModels, string $providerId, string $modelId): void
     {
+        if (! $this->isApprovedModel($approvedModels, $providerId, $modelId)) {
+            throw new InvalidArgumentException("Model [{$modelId}] is not approved for provider [{$providerId}].");
+        }
+    }
+
+    /**
+     * @param  array<int, array{provider: string, model: string}>  $approvedModels
+     */
+    private function isApprovedModel(array $approvedModels, string $providerId, string $modelId): bool
+    {
         $approvedModelKey = "{$providerId}:{$modelId}";
         $approvedModelKeys = array_map(
             static fn (array $approvedModel): string => "{$approvedModel['provider']}:{$approvedModel['model']}",
             $approvedModels,
         );
-        $isApproved = in_array($approvedModelKey, $approvedModelKeys, true);
 
-        if (! $isApproved) {
-            throw new InvalidArgumentException("Model [{$modelId}] is not approved for provider [{$providerId}].");
-        }
+        return in_array($approvedModelKey, $approvedModelKeys, true);
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $modelPricing
+     * @param  array<int, array{provider: string, model: string}>  $approvedModels
+     * @return array<int, array<string, mixed>>
+     */
+    private function retainApprovedModelPricing(array $modelPricing, array $approvedModels): array
+    {
+        return array_values(array_filter(
+            $modelPricing,
+            fn (array $pricing): bool => $this->isApprovedModel(
+                $approvedModels,
+                $pricing['provider'],
+                $pricing['model'],
+            ),
+        ));
     }
 
     /**
@@ -279,5 +314,36 @@ class ProviderSettingsService
         }
 
         return $normalizedModels;
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $modelPricing
+     * @param  array<int, array{provider: string, model: string}>  $approvedModels
+     * @return array<int, array{provider: string, model: string, currency: string, input_cost_per_million: float, output_cost_per_million: float}>
+     */
+    private function normalizeModelPricing(array $modelPricing, array $approvedModels): array
+    {
+        $normalizedPricing = [];
+
+        foreach ($modelPricing as $pricing) {
+            $providerId = $pricing['provider'];
+            $modelId = $pricing['model'];
+            $this->assertApprovedModel($approvedModels, $providerId, $modelId);
+            $pricingKey = "{$providerId}:{$modelId}";
+
+            if (isset($normalizedPricing[$pricingKey])) {
+                throw new InvalidArgumentException("Pricing for model [{$modelId}] is duplicated.");
+            }
+
+            $normalizedPricing[$pricingKey] = [
+                'provider' => $providerId,
+                'model' => $modelId,
+                'currency' => strtoupper($pricing['currency']),
+                'input_cost_per_million' => (float) $pricing['input_cost_per_million'],
+                'output_cost_per_million' => (float) $pricing['output_cost_per_million'],
+            ];
+        }
+
+        return array_values($normalizedPricing);
     }
 }

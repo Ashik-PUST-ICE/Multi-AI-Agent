@@ -8,6 +8,7 @@ use App\Llm\UserLlmProviderResolver;
 use App\Models\AgentRun;
 use App\Models\User;
 use App\Services\AgentActivityLogger;
+use App\Services\TaskTokenBudgetService;
 use App\Tools\ToolRegistry;
 use InvalidArgumentException;
 use RuntimeException;
@@ -109,9 +110,10 @@ abstract class BaseAgent
             $context,
             $agentSpecification['system_prompt'] ?? $this->systemPrompt(),
         );
-        $usage = [];
+        $usage = $agentRun?->token_usage ?? [];
         $toolCallCount = 0;
         $maximumSteps = max(1, (int) ($agentSpecification['max_steps'] ?? self::MAX_TOOL_ITERATIONS));
+        $agentTokenLimit = max(1, (int) ($agentSpecification['max_tokens'] ?? 2000));
         $this->recordInitialMessages($agentRun, $messages);
         $this->activityLogger?->recordEvent($agentRun, 'agent.started', [
             'agent' => $this->name(),
@@ -126,9 +128,10 @@ abstract class BaseAgent
                 $messages,
                 $allowedTools,
                 $model,
-                (int) ($agentSpecification['max_tokens'] ?? 2000),
+                $agentTokenLimit,
+                $agentRun,
+                $usage,
             );
-            $usage = $this->combineUsage($usage, $response->usage);
             $this->recordAssistantResponse($agentRun, $response, $iteration);
 
             if ($response->toolCalls === []) {
@@ -143,7 +146,8 @@ abstract class BaseAgent
                         $outputErrors,
                         $agentSpecification['output_schema'],
                         $model,
-                        (int) ($agentSpecification['max_tokens'] ?? 2000),
+                        $agentTokenLimit,
+                        $agentRun,
                         $usage,
                     );
                 }
@@ -261,15 +265,35 @@ abstract class BaseAgent
         array $allowedTools,
         ?string $model,
         int $maximumTokens,
+        ?AgentRun $agentRun,
+        array &$cumulativeUsage,
     ): ChatResponse {
+        $tokenBudgetService = app(TaskTokenBudgetService::class);
+        $maximumOutputTokens = $tokenBudgetService->maximumOutputTokens(
+            $agentRun,
+            $messages,
+            $maximumTokens,
+            $maximumTokens,
+            $cumulativeUsage,
+        );
         $toolDefinitions = $this->tools->definitions($allowedTools);
-        $options = ['max_tokens' => $maximumTokens];
+        $options = ['max_tokens' => $maximumOutputTokens];
 
         if ($model !== null) {
             $options['model'] = $model;
         }
 
-        return $provider->chat($messages, $toolDefinitions, $options);
+        $response = $provider->chat($messages, $toolDefinitions, $options);
+        $responseUsage = $tokenBudgetService->responseUsage($messages, $response);
+        $cumulativeUsage = $this->combineUsage($cumulativeUsage, $responseUsage);
+
+        if ($agentRun !== null) {
+            $tokenBudgetService->recordUsage($agentRun, $cumulativeUsage, $maximumTokens);
+        } elseif (($cumulativeUsage['total_tokens'] ?? 0) > $maximumTokens) {
+            throw new RuntimeException('The agent exceeded its configured token budget.');
+        }
+
+        return $response;
     }
 
     /**
@@ -288,6 +312,7 @@ abstract class BaseAgent
         array $outputSchema,
         ?string $model,
         int $maximumTokens,
+        ?AgentRun $agentRun,
         array &$usage,
     ): array {
         $correctionMessages = [
@@ -304,15 +329,15 @@ abstract class BaseAgent
                 ], JSON_THROW_ON_ERROR),
             ],
         ];
-        $correctionResponse = $provider->chat(
+        $correctionResponse = $this->requestResponse(
+            $provider,
             [...$messages, ...$correctionMessages],
             [],
-            array_filter([
-                'model' => $model,
-                'max_tokens' => $maximumTokens,
-            ], static fn (mixed $value): bool => $value !== null),
+            $model,
+            $maximumTokens,
+            $agentRun,
+            $usage,
         );
-        $usage = $this->combineUsage($usage, $correctionResponse->usage);
         $correctedOutput = json_decode($correctionResponse->text ?? '', true, 512, JSON_THROW_ON_ERROR);
 
         if (! is_array($correctedOutput) || array_is_list($correctedOutput)) {

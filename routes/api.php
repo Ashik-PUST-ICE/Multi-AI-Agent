@@ -32,6 +32,7 @@ Route::middleware('auth:sanctum')->group(function () {
         ]);
     });
 
+    Route::post('/v1/tasks/estimate', [TaskController::class, 'estimate'])->name('api.v1.tasks.estimate');
     Route::post('/v1/tasks', [TaskController::class, 'store'])->name('api.v1.tasks.store');
     Route::get('/v1/tasks', [TaskController::class, 'index'])->name('api.v1.tasks.index');
     Route::get('/v1/tasks/{task}', [TaskController::class, 'show'])

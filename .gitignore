@@ -33,7 +33,6 @@ Homestead.yaml
 /.vscode
 /.zed
 /.claude
-/tests
 
 # Node.js
 /node_modules

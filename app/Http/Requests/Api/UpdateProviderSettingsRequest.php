@@ -27,6 +27,12 @@ class UpdateProviderSettingsRequest extends FormRequest
             'agent_models.*.model' => ['required', 'string', 'max:128'],
             'fallback_provider' => ['nullable', 'required_with:fallback_model', 'string', 'max:64'],
             'fallback_model' => ['nullable', 'required_with:fallback_provider', 'string', 'max:128'],
+            'model_pricing' => ['sometimes', 'array', 'max:100'],
+            'model_pricing.*.provider' => ['required', 'string', 'max:64'],
+            'model_pricing.*.model' => ['required', 'string', 'max:128'],
+            'model_pricing.*.currency' => ['required', 'string', 'size:3', 'alpha'],
+            'model_pricing.*.input_cost_per_million' => ['required', 'numeric', 'min:0', 'max:100000'],
+            'model_pricing.*.output_cost_per_million' => ['required', 'numeric', 'min:0', 'max:100000'],
         ];
     }
 }
