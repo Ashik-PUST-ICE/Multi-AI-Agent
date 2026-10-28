@@ -13,6 +13,7 @@ use App\Traits\ResponseTrait;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 use InvalidArgumentException;
 use RuntimeException;
 
@@ -123,10 +124,32 @@ class OrchestratorService
             $prompt,
             $routing['agent_sequence'],
         );
+        $autoEstimate = $this->taskCostEstimator->estimate(
+            $user,
+            $prompt,
+            $routing['agent_sequence'],
+            TASK_MODE_SANDBOX,
+            AGENT_BRAIN_MODE_AUTO,
+        );
+        $fixedEstimate = $this->taskCostEstimator->estimate(
+            $user,
+            $prompt,
+            $routing['agent_sequence'],
+            TASK_MODE_SANDBOX,
+            AGENT_BRAIN_MODE_FIXED,
+        );
 
         return $this->success([
             'routing' => $routing,
             'cost_estimate' => $costEstimate,
+            'routing_cost_comparison' => [
+                'auto' => $autoEstimate,
+                'fixed' => $fixedEstimate,
+                'evaluation' => [
+                    'status' => 'unavailable',
+                    'reason' => 'A trusted evaluation test set and evaluation results are not available yet.',
+                ],
+            ],
         ]);
     }
 
@@ -137,6 +160,7 @@ class OrchestratorService
                 $query->orderBy('id');
             }])
             ->findOrFail($taskId);
+        Gate::forUser($user)->authorize('view', $task);
 
         return $this->success(['task' => $this->taskData($task, true)]);
     }
@@ -144,6 +168,7 @@ class OrchestratorService
     public function replay(User $user, int $taskId): JsonResponse
     {
         $task = $user->tasks()->findOrFail($taskId);
+        Gate::forUser($user)->authorize('view', $task);
         $events = $task->runEvents()
             ->orderBy('occurred_at')
             ->orderBy('id')
@@ -363,6 +388,17 @@ class OrchestratorService
                 'started_at',
                 'completed_at',
             ]))->all();
+            $taskData['routing_events'] = $task->runEvents()
+                ->whereIn('event_type', ['agent.started', 'agent.model_fallback'])
+                ->orderBy('occurred_at')
+                ->get(['event_type', 'mode', 'payload', 'occurred_at'])
+                ->map(static fn ($event): array => [
+                    'event_type' => $event->event_type,
+                    'mode' => $event->mode,
+                    'payload' => $event->payload,
+                    'occurred_at' => $event->occurred_at,
+                ])
+                ->all();
         }
 
         return $taskData;

@@ -129,6 +129,44 @@ class ProviderSettingsApiTest extends TestCase
         ])->assertUnprocessable();
     }
 
+    public function test_custom_brain_mode_requires_an_approved_agent_model_and_saves_routing_policy(): void
+    {
+        $user = User::factory()->create();
+        Sanctum::actingAs($user);
+        $catalog = app(ProviderCatalog::class);
+        $providerId = array_key_first($catalog->all());
+        $models = array_keys($catalog->provider($providerId)['models']);
+
+        $this->putJson('/api/v1/llm/settings', [
+            'provider' => $providerId,
+            'model' => $models[0],
+            'approved_models' => [
+                ['provider' => $providerId, 'model' => $models[0]],
+                ['provider' => $providerId, 'model' => $models[1]],
+            ],
+            'agent_brains' => ['Research' => 'custom'],
+            'routing_policy' => 'balanced',
+        ])->assertUnprocessable()
+            ->assertJsonPath('message', 'Agent [Research] must have a selected model in Custom mode.');
+
+        $this->putJson('/api/v1/llm/settings', [
+            'provider' => $providerId,
+            'model' => $models[0],
+            'approved_models' => [
+                ['provider' => $providerId, 'model' => $models[0]],
+                ['provider' => $providerId, 'model' => $models[1]],
+            ],
+            'agent_brains' => ['Research' => 'custom'],
+            'agent_models' => [
+                'Research' => ['provider' => $providerId, 'model' => $models[1]],
+            ],
+            'routing_policy' => 'balanced',
+        ])->assertOk()
+            ->assertJsonPath('settings.agent_brains.Research', 'custom')
+            ->assertJsonPath('settings.agent_models.Research.model', $models[1])
+            ->assertJsonPath('settings.routing_policy', 'balanced');
+    }
+
     public function test_private_custom_base_urls_are_rejected_by_default(): void
     {
         $user = User::factory()->create();

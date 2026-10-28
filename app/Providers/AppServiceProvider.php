@@ -2,6 +2,11 @@
 
 namespace App\Providers;
 
+use App\Models\PendingApproval;
+use App\Models\Task;
+use App\Policies\PendingApprovalPolicy;
+use App\Policies\TaskPolicy;
+use App\Tenancy\TenantContext;
 use App\Tools\ToolRegistry;
 use App\Tools\WebSearchTool;
 use Illuminate\Support\Facades\Gate;
@@ -14,6 +19,8 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
+        $this->app->scoped(TenantContext::class);
+
         $this->app->bind(ToolRegistry::class, function (): ToolRegistry {
             $toolRegistry = new ToolRegistry;
             $toolRegistry->register(new WebSearchTool);
@@ -27,8 +34,13 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        Gate::policy(Task::class, TaskPolicy::class);
+        Gate::policy(PendingApproval::class, PendingApprovalPolicy::class);
+
         Gate::before(function ($user, $ability) {
-            if ($user && method_exists($user, 'hasRole')) {
+            if ($ability === 'agent_specs.manage'
+                && $user
+                && method_exists($user, 'hasRole')) {
                 return $user->hasRole('super-admin') ? true : null;
             }
 

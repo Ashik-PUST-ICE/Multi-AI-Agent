@@ -81,6 +81,18 @@ class TaskRoutingAndBudgetTest extends TestCase
         $this->assertSame(3000, $singleEstimate['estimated_tokens']);
         $this->assertSame(10000, $multiEstimate['estimated_tokens']);
         $this->assertGreaterThan($singleEstimate['maximum_cost'], $multiEstimate['maximum_cost']);
+
+        Sanctum::actingAs($user);
+        $this->postJson('/api/v1/tasks/estimate', [
+            'prompt' => 'Write a summary about renewable energy.',
+        ])->assertOk()
+            ->assertJsonPath('routing_cost_comparison.auto.status', 'available')
+            ->assertJsonPath('routing_cost_comparison.fixed.status', 'available')
+            ->assertJsonPath('routing_cost_comparison.evaluation.status', 'unavailable')
+            ->assertJsonPath(
+                'cost_estimate.agents.0.routing_reason',
+                'Cheapest policy selected the compatible approved model with the lowest estimated cost at the agent token limit using user-entered input and output rates.',
+            );
     }
 
     public function test_token_budget_overrun_is_persisted_before_it_stops_the_run(): void
@@ -158,7 +170,7 @@ class TaskRoutingAndBudgetTest extends TestCase
 
         $resolver = app(UserLlmProviderResolver::class);
         $this->assertSame($models[1], $resolver->selectedModel($user, 'Writer', TASK_MODE_SANDBOX)['model']);
-        $this->assertSame($models[0], $resolver->selectedModel($user, 'Writer', TASK_MODE_LIVE)['model']);
+        $this->assertSame($models[1], $resolver->selectedModel($user, 'Writer', TASK_MODE_LIVE)['model']);
 
         config([
             'llm.sandbox_task_token_budget' => 100,
@@ -205,6 +217,279 @@ class TaskRoutingAndBudgetTest extends TestCase
         $this->assertLessThan($liveOutputTokens, $sandboxOutputTokens);
     }
 
+    public function test_model_router_obeys_brain_modes_and_never_uses_unapproved_models(): void
+    {
+        $catalog = app(ProviderCatalog::class);
+        $providerId = ProviderCatalog::OPENAI;
+        $models = array_keys($catalog->provider($providerId)['models']);
+        $user = User::factory()->create();
+        $user->llmSettings()->create([
+            'provider' => $providerId,
+            'model' => $models[0],
+            'approved_models' => [
+                ['provider' => $providerId, 'model' => $models[0]],
+                ['provider' => $providerId, 'model' => $models[1]],
+            ],
+            'agent_models' => [
+                'Writer' => ['provider' => $providerId, 'model' => $models[0]],
+            ],
+            'fallback_provider' => $providerId,
+            'fallback_model' => $models[0],
+            'agent_brains' => ['Writer' => AGENT_BRAIN_MODE_AUTO],
+            'routing_policy' => MODEL_ROUTING_POLICY_CHEAPEST,
+            'model_pricing' => [
+                [
+                    'provider' => $providerId,
+                    'model' => $models[0],
+                    'currency' => 'USD',
+                    'input_cost_per_million' => 10,
+                    'output_cost_per_million' => 10,
+                ],
+                [
+                    'provider' => $providerId,
+                    'model' => $models[1],
+                    'currency' => 'USD',
+                    'input_cost_per_million' => 1,
+                    'output_cost_per_million' => 1,
+                ],
+            ],
+        ]);
+
+        $resolver = app(UserLlmProviderResolver::class);
+        $autoSelection = $resolver->selectedModel($user, 'Writer', TASK_MODE_SANDBOX);
+        $fixedSelection = $resolver->selectedModel(
+            $user,
+            'Writer',
+            TASK_MODE_SANDBOX,
+            AGENT_BRAIN_MODE_FIXED,
+        );
+
+        $this->assertSame($models[1], $autoSelection['model']);
+        $this->assertSame(AGENT_BRAIN_MODE_AUTO, $autoSelection['brain_mode']);
+        $this->assertSame($models[0], $fixedSelection['model']);
+        $this->assertSame(AGENT_BRAIN_MODE_FIXED, $fixedSelection['brain_mode']);
+        $this->assertCount(1, $autoSelection['fallback_candidates']);
+        $this->assertSame($models[0], $autoSelection['fallback_candidates'][0]['model']);
+
+        $settings = $user->llmSettings;
+        $settings->agent_brains = ['Writer' => AGENT_BRAIN_MODE_CUSTOM];
+        $settings->save();
+        $customSelection = $resolver->selectedModel($user, 'Writer', TASK_MODE_SANDBOX);
+
+        $this->assertSame($models[0], $customSelection['model']);
+        $this->assertSame(AGENT_BRAIN_MODE_CUSTOM, $customSelection['brain_mode']);
+        $this->assertStringContainsString('custom approved model', $customSelection['reason']);
+    }
+
+    public function test_balanced_routing_uses_prompt_complexity_to_raise_context_threshold(): void
+    {
+        $approvedModels = [
+            ['provider' => ProviderCatalog::OPENAI, 'model' => 'gpt-4o-mini'],
+            ['provider' => ProviderCatalog::ANTHROPIC, 'model' => 'claude-3-5-haiku-20241022'],
+            ['provider' => ProviderCatalog::GEMINI, 'model' => 'gemini-2.0-flash'],
+        ];
+        $user = User::factory()->create();
+        $user->llmSettings()->create([
+            'provider' => ProviderCatalog::OPENAI,
+            'model' => 'gpt-4o-mini',
+            'approved_models' => $approvedModels,
+            'agent_brains' => ['Writer' => AGENT_BRAIN_MODE_AUTO],
+            'routing_policy' => MODEL_ROUTING_POLICY_BALANCED,
+            'model_pricing' => [
+                [
+                    'provider' => ProviderCatalog::OPENAI,
+                    'model' => 'gpt-4o-mini',
+                    'currency' => 'USD',
+                    'input_cost_per_million' => 1,
+                    'output_cost_per_million' => 1,
+                ],
+                [
+                    'provider' => ProviderCatalog::ANTHROPIC,
+                    'model' => 'claude-3-5-haiku-20241022',
+                    'currency' => 'USD',
+                    'input_cost_per_million' => 2,
+                    'output_cost_per_million' => 2,
+                ],
+                [
+                    'provider' => ProviderCatalog::GEMINI,
+                    'model' => 'gemini-2.0-flash',
+                    'currency' => 'USD',
+                    'input_cost_per_million' => 3,
+                    'output_cost_per_million' => 3,
+                ],
+            ],
+        ]);
+        $resolver = app(UserLlmProviderResolver::class);
+
+        $simpleSelection = $resolver->selectedModel(
+            $user,
+            'Writer',
+            TASK_MODE_SANDBOX,
+            null,
+            false,
+            'Summarize this.',
+        );
+        $complexSelection = $resolver->selectedModel(
+            $user,
+            'Writer',
+            TASK_MODE_SANDBOX,
+            null,
+            false,
+            'Compare the alternatives and evaluate their trade-offs step-by-step.',
+        );
+
+        $this->assertSame('simple', $simpleSelection['complexity']);
+        $this->assertSame(ProviderCatalog::OPENAI, $simpleSelection['provider']);
+        $this->assertSame('complex', $complexSelection['complexity']);
+        $this->assertSame(ProviderCatalog::ANTHROPIC, $complexSelection['provider']);
+        $this->assertStringContainsString('complexity', $complexSelection['reason']);
+    }
+
+    public function test_cheapest_routing_weights_user_rates_by_estimated_input_and_output_tokens(): void
+    {
+        $models = [
+            ['provider' => ProviderCatalog::OPENAI, 'model' => 'gpt-4o-mini'],
+            ['provider' => ProviderCatalog::OPENAI, 'model' => 'gpt-4o'],
+        ];
+        $user = User::factory()->create();
+        $user->llmSettings()->create([
+            'provider' => ProviderCatalog::OPENAI,
+            'model' => 'gpt-4o-mini',
+            'approved_models' => $models,
+            'agent_brains' => ['Writer' => AGENT_BRAIN_MODE_AUTO],
+            'routing_policy' => MODEL_ROUTING_POLICY_CHEAPEST,
+            'model_pricing' => [
+                [
+                    'provider' => ProviderCatalog::OPENAI,
+                    'model' => 'gpt-4o-mini',
+                    'currency' => 'USD',
+                    'input_cost_per_million' => 1000,
+                    'output_cost_per_million' => 0,
+                ],
+                [
+                    'provider' => ProviderCatalog::OPENAI,
+                    'model' => 'gpt-4o',
+                    'currency' => 'USD',
+                    'input_cost_per_million' => 0,
+                    'output_cost_per_million' => 100,
+                ],
+            ],
+        ]);
+
+        $selection = app(UserLlmProviderResolver::class)->selectedModel(
+            $user,
+            'Writer',
+            TASK_MODE_SANDBOX,
+            null,
+            false,
+            'Write a concise response.',
+        );
+
+        $this->assertSame('gpt-4o-mini', $selection['model']);
+    }
+
+    public function test_cost_estimate_includes_the_configured_fallback_attempt(): void
+    {
+        $models = [
+            ['provider' => ProviderCatalog::OPENAI, 'model' => 'gpt-4o-mini'],
+            ['provider' => ProviderCatalog::OPENAI, 'model' => 'gpt-4o'],
+        ];
+        $user = User::factory()->create();
+        $settings = $user->llmSettings()->create([
+            'provider' => ProviderCatalog::OPENAI,
+            'model' => 'gpt-4o-mini',
+            'approved_models' => $models,
+            'fallback_provider' => ProviderCatalog::OPENAI,
+            'fallback_model' => 'gpt-4o',
+            'agent_brains' => ['Writer' => AGENT_BRAIN_MODE_AUTO],
+            'model_pricing' => [
+                [
+                    'provider' => ProviderCatalog::OPENAI,
+                    'model' => 'gpt-4o-mini',
+                    'currency' => 'USD',
+                    'input_cost_per_million' => 1,
+                    'output_cost_per_million' => 2,
+                ],
+                [
+                    'provider' => ProviderCatalog::OPENAI,
+                    'model' => 'gpt-4o',
+                    'currency' => 'USD',
+                    'input_cost_per_million' => 3,
+                    'output_cost_per_million' => 4,
+                ],
+            ],
+        ]);
+        $estimator = app(TaskCostEstimator::class);
+
+        $estimate = $estimator->estimate($user, 'Write a concise response.', ['Writer']);
+
+        $this->assertSame('available', $estimate['status']);
+        $this->assertSame('gpt-4o', $estimate['agents'][0]['fallback_candidates'][0]['model']);
+        $this->assertGreaterThan(0, $estimate['agents'][0]['fallback_maximum_cost']);
+        $this->assertEqualsWithDelta(
+            $estimate['agents'][0]['primary_estimated_cost'] + $estimate['agents'][0]['fallback_maximum_cost'],
+            $estimate['agents'][0]['maximum_cost'],
+            0.00000001,
+        );
+
+        $settings->model_pricing = array_slice($settings->model_pricing, 0, 1);
+        $settings->save();
+        $user->unsetRelation('llmSettings');
+        $unpricedFallbackEstimate = $estimator->estimate($user, 'Write a concise response.', ['Writer']);
+
+        $this->assertSame('unavailable', $unpricedFallbackEstimate['status']);
+        $this->assertStringContainsString('fallback', $unpricedFallbackEstimate['reason']);
+    }
+
+    public function test_auto_routing_filters_models_that_do_not_support_agent_tools(): void
+    {
+        $providerId = ProviderCatalog::DEEPSEEK;
+        $modelIds = array_keys(app(ProviderCatalog::class)->provider($providerId)['models']);
+        $user = User::factory()->create();
+        $user->llmSettings()->create([
+            'provider' => $providerId,
+            'model' => $modelIds[1],
+            'approved_models' => array_map(
+                static fn (string $modelId): array => ['provider' => $providerId, 'model' => $modelId],
+                $modelIds,
+            ),
+            'agent_models' => [
+                'Research' => ['provider' => $providerId, 'model' => $modelIds[1]],
+            ],
+            'agent_brains' => ['Research' => AGENT_BRAIN_MODE_AUTO],
+            'routing_policy' => MODEL_ROUTING_POLICY_CHEAPEST,
+            'model_pricing' => [
+                [
+                    'provider' => $providerId,
+                    'model' => $modelIds[0],
+                    'currency' => 'USD',
+                    'input_cost_per_million' => 1,
+                    'output_cost_per_million' => 1,
+                ],
+                [
+                    'provider' => $providerId,
+                    'model' => $modelIds[1],
+                    'currency' => 'USD',
+                    'input_cost_per_million' => 0,
+                    'output_cost_per_million' => 0,
+                ],
+            ],
+        ]);
+
+        $resolver = app(UserLlmProviderResolver::class);
+        $selection = $resolver->selectedModel($user, 'Research', TASK_MODE_SANDBOX);
+
+        $this->assertSame($modelIds[0], $selection['model']);
+
+        $settings = $user->llmSettings;
+        $settings->agent_brains = ['Research' => AGENT_BRAIN_MODE_CUSTOM];
+        $settings->save();
+        $estimate = app(TaskCostEstimator::class)->estimate($user, 'Find reliable sources.', ['Research']);
+
+        $this->assertFalse($estimate['can_complete']);
+        $this->assertStringContainsString('does not meet the capabilities', $estimate['reason']);
+    }
+
     public function test_missing_provider_settings_are_reported_by_the_estimate_endpoint(): void
     {
         Sanctum::actingAs(User::factory()->create());
@@ -214,6 +499,46 @@ class TaskRoutingAndBudgetTest extends TestCase
         ])->assertOk()
             ->assertJsonPath('cost_estimate.status', 'unavailable')
             ->assertJsonPath('cost_estimate.reason', 'Save provider settings and approve a model before estimating cost.');
+    }
+
+    public function test_task_details_expose_routing_decision_reason_from_run_events(): void
+    {
+        $user = User::factory()->create();
+        $task = $user->tasks()->create([
+            'title' => 'Routing event test',
+            'description' => 'Explain which model was selected.',
+            'input' => ['prompt' => 'Explain which model was selected.'],
+            'mode' => TASK_MODE_SANDBOX,
+            'status' => TASK_STATUS_RUNNING,
+        ]);
+        $agentRun = $task->agentRuns()->create([
+            'agent_name' => 'Writer',
+            'input' => ['prompt' => 'Explain which model was selected.', 'context' => []],
+            'mode' => TASK_MODE_SANDBOX,
+            'status' => AGENT_RUN_STATUS_RUNNING,
+        ]);
+        $task->runEvents()->create([
+            'agent_run_id' => $agentRun->id,
+            'event_type' => 'agent.started',
+            'mode' => TASK_MODE_SANDBOX,
+            'sequence' => 1,
+            'payload' => [
+                'agent' => 'Writer',
+                'model' => 'user-approved-model',
+                'routing' => [
+                    'brain_mode' => AGENT_BRAIN_MODE_AUTO,
+                    'policy' => MODEL_ROUTING_POLICY_CHEAPEST,
+                    'reason' => 'Selected the lowest user-entered rate.',
+                ],
+            ],
+            'occurred_at' => now(),
+        ]);
+        Sanctum::actingAs($user);
+
+        $this->getJson("/api/v1/tasks/{$task->id}")
+            ->assertOk()
+            ->assertJsonPath('task.routing_events.0.payload.routing.reason', 'Selected the lowest user-entered rate.')
+            ->assertJsonPath('task.routing_events.0.mode', TASK_MODE_SANDBOX);
     }
 
     private function userWithApprovedModel(): User

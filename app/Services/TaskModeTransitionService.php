@@ -11,6 +11,7 @@ use App\Models\User;
 use App\Traits\ResponseTrait;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 use InvalidArgumentException;
 
 class TaskModeTransitionService
@@ -27,16 +28,17 @@ class TaskModeTransitionService
     {
         $result = DB::transaction(function () use ($user, $taskId): array {
             $sourceTask = $user->tasks()
-                ->with('agentRuns')
+                ->with(['agentRuns', 'runEvents'])
                 ->lockForUpdate()
                 ->findOrFail($taskId);
+            Gate::forUser($user)->authorize('transitionToLive', $sourceTask);
             $routing = $sourceTask->input['routing'] ?? [];
             $agentSequence = is_array($routing['agent_sequence'] ?? null)
                 ? array_values($routing['agent_sequence'])
                 : [$sourceTask->agentRuns->last()?->agent_name ?? ''];
             $taskInput = $sourceTask->input ?? [];
             $prompt = $taskInput['prompt'] ?? $sourceTask->description ?? '';
-            $blockedRequirements = $this->blockedRequirements($user, $sourceTask, $agentSequence);
+            $blockedRequirements = $this->blockedRequirements($user, $sourceTask, $agentSequence, $prompt);
             $costEstimate = null;
 
             if ($blockedRequirements === []) {
@@ -167,7 +169,7 @@ class TaskModeTransitionService
      * @param  list<string>  $agentSequence
      * @return list<string>
      */
-    private function blockedRequirements(User $user, Task $task, array $agentSequence): array
+    private function blockedRequirements(User $user, Task $task, array $agentSequence, string $prompt): array
     {
         $blockedRequirements = [];
 
@@ -198,14 +200,43 @@ class TaskModeTransitionService
         }
 
         foreach ($agentSequence as $agentName) {
-            try {
-                $modelSelection = $this->providerResolver->selectedModel($user, $agentName, TASK_MODE_LIVE);
-                $hasCredentials = $user->apiKeys()
-                    ->where('provider', $modelSelection['provider'])
-                    ->whereNotNull('api_key')
-                    ->exists();
+            $agentRun = $task->agentRuns->firstWhere('agent_name', $agentName);
+            if ($agentRun === null) {
+                $blockedRequirements[] = "sandbox_run_missing_for_{$agentName}";
 
-                if (! $hasCredentials) {
+                continue;
+            }
+
+            $startedEvent = $task->runEvents->first(
+                static fn ($event): bool => $event->agent_run_id === $agentRun->id
+                    && $event->event_type === 'agent.started',
+            );
+            $testedFingerprint = $startedEvent?->payload['routing']['settings_fingerprint'] ?? null;
+
+            try {
+                $sandboxSelection = $this->providerResolver->selectedModel(
+                    $user,
+                    $agentName,
+                    TASK_MODE_SANDBOX,
+                    null,
+                    false,
+                    $prompt,
+                );
+                if (! is_string($testedFingerprint)) {
+                    $blockedRequirements[] = "brain_settings_not_tested_for_{$agentName}";
+                } elseif (! hash_equals($sandboxSelection['settings_fingerprint'], $testedFingerprint)) {
+                    $blockedRequirements[] = "brain_settings_changed_after_sandbox_for_{$agentName}";
+                }
+
+                $modelSelection = $this->providerResolver->selectedModel(
+                    $user,
+                    $agentName,
+                    TASK_MODE_LIVE,
+                    null,
+                    false,
+                    $prompt,
+                );
+                if (! $this->providerResolver->hasConfiguredCredentials($user, $modelSelection['provider'])) {
                     $blockedRequirements[] = "credentials_missing_for_{$agentName}";
                 }
             } catch (InvalidArgumentException) {

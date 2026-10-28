@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Agents\AgentRegistry;
 use App\Llm\UserLlmProviderResolver;
 use App\Models\User;
+use InvalidArgumentException;
 
 class TaskCostEstimator
 {
@@ -22,6 +23,7 @@ class TaskCostEstimator
         string $prompt,
         array $agentSequence,
         string $mode = TASK_MODE_SANDBOX,
+        ?string $brainModeOverride = null,
     ): array {
         $settings = $user->llmSettings;
         if ($settings === null) {
@@ -52,7 +54,27 @@ class TaskCostEstimator
 
         foreach ($agentSequence as $agentName) {
             $agentSpecification = $this->agentRegistry->activeSpec($agentName);
-            $modelSelection = $this->providerResolver->selectedModel($user, $agentName, $mode);
+            try {
+                $modelSelection = $this->providerResolver->selectedModel(
+                    $user,
+                    $agentName,
+                    $mode,
+                    $brainModeOverride,
+                    false,
+                    $prompt,
+                );
+            } catch (InvalidArgumentException $exception) {
+                return [
+                    'status' => 'unavailable',
+                    'currency' => null,
+                    'maximum_cost' => null,
+                    'maximum_tokens' => $maximumTokens,
+                    'estimated_tokens' => null,
+                    'can_complete' => false,
+                    'agents' => [],
+                    'reason' => $exception->getMessage(),
+                ];
+            }
             $modelKey = $this->modelKey($modelSelection['provider'], $modelSelection['model']);
             $pricing = $modelPricing[$modelKey] ?? null;
             $estimatedInputTokens = $this->estimatedInputTokens($prompt);
@@ -72,6 +94,9 @@ class TaskCostEstimator
                 : 0;
             $remainingTaskTokens = max(0, $remainingTaskTokens - $maximumAgentTokens);
             $agentCost = null;
+            $fallbackCost = 0.0;
+            $fallbackPricingAvailable = true;
+            $fallbackCurrencies = [];
 
             if ($pricing === null) {
                 $isCostAvailable = false;
@@ -82,17 +107,59 @@ class TaskCostEstimator
                     ($estimatedInputTokens * (float) $pricing['input_cost_per_million'])
                     + ($estimatedOutputTokens * (float) $pricing['output_cost_per_million'])
                 ) / 1_000_000;
-                $totalMaximumCost += $agentCost;
+            }
+
+            foreach ($modelSelection['fallback_candidates'] as $fallbackSelection) {
+                $fallbackPricing = $modelPricing[$this->modelKey(
+                    $fallbackSelection['provider'],
+                    $fallbackSelection['model'],
+                )] ?? null;
+
+                if ($fallbackPricing === null) {
+                    $fallbackPricingAvailable = false;
+                    $isCostAvailable = false;
+
+                    continue;
+                }
+
+                $fallbackCurrency = $fallbackPricing['currency'];
+                $currencies[$fallbackCurrency] = true;
+                $fallbackCurrencies[$fallbackCurrency] = true;
+                $fallbackCost += (
+                    ($estimatedInputTokens * (float) $fallbackPricing['input_cost_per_million'])
+                    + ($estimatedOutputTokens * (float) $fallbackPricing['output_cost_per_million'])
+                ) / 1_000_000;
+            }
+
+            $fallbackCurrency = count($fallbackCurrencies) === 1
+                ? array_key_first($fallbackCurrencies)
+                : null;
+            $hasFallback = $modelSelection['fallback_candidates'] !== [];
+            $agentMaximumCost = $agentCost !== null
+                && $fallbackPricingAvailable
+                && (! $hasFallback || $pricing['currency'] === $fallbackCurrency)
+                ? $agentCost + $fallbackCost
+                : null;
+            if ($agentMaximumCost !== null) {
+                $totalMaximumCost += $agentMaximumCost;
             }
 
             $agentEstimates[] = [
                 'agent' => $agentName,
                 'provider' => $modelSelection['provider'],
                 'model' => $modelSelection['model'],
+                'brain_mode' => $modelSelection['brain_mode'],
+                'routing_policy' => $modelSelection['policy'],
+                'complexity' => $modelSelection['complexity'],
+                'routing_reason' => $modelSelection['reason'],
+                'fallback_candidates' => $modelSelection['fallback_candidates'],
                 'estimated_input_tokens' => $estimatedInputTokens,
                 'maximum_output_tokens' => $estimatedOutputTokens,
                 'maximum_total_tokens' => $maximumAgentTokens,
-                'maximum_cost' => $agentCost === null ? null : round($agentCost, 8),
+                'primary_estimated_cost' => $agentCost === null ? null : round($agentCost, 8),
+                'fallback_maximum_cost' => $fallbackPricingAvailable ? round($fallbackCost, 8) : null,
+                'fallback_currency' => $fallbackCurrency,
+                'maximum_cost' => $agentMaximumCost === null ? null : round($agentMaximumCost, 8),
                 'currency' => $pricing['currency'] ?? null,
             ];
         }
@@ -114,7 +181,7 @@ class TaskCostEstimator
             'agents' => $agentEstimates,
             'reason' => $isCostAvailable && $isWithinTaskBudget
                 ? null
-                : 'Pricing is missing for a selected model, currencies differ, or the route exceeds the task token budget.',
+                : 'Pricing is missing for a selected model or fallback, currencies differ, or the route exceeds the task token budget.',
         ];
     }
 

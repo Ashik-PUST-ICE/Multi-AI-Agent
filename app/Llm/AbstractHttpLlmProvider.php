@@ -41,13 +41,24 @@ abstract class AbstractHttpLlmProvider implements LlmProvider
     protected function decodeResponse(Response $response): array
     {
         if (! $response->successful()) {
-            throw new RuntimeException("LLM provider request failed with HTTP status {$response->status()}.");
+            $status = $response->status();
+            $retryable = $status === 429 || $status >= 500;
+
+            throw new ProviderRequestException(
+                'The LLM provider returned an unsuccessful HTTP response.',
+                $retryable,
+                new RuntimeException("LLM provider request failed with HTTP status {$status}."),
+            );
         }
 
         $body = $response->json();
 
         if (! is_array($body)) {
-            throw new RuntimeException('LLM provider returned an invalid JSON response.');
+            throw new ProviderRequestException(
+                'The LLM provider returned an invalid response.',
+                false,
+                new RuntimeException('LLM provider returned an invalid JSON response.'),
+            );
         }
 
         return $body;

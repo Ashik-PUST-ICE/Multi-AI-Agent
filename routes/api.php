@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\AgentSpecController;
+use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\ProviderSettingsController;
 use App\Http\Controllers\Api\TaskController;
 use App\Http\Controllers\Api\ToolApprovalController;
@@ -25,7 +26,19 @@ Route::get('/v1/info', function () {
     ]);
 });
 
-Route::middleware('auth:sanctum')->group(function () {
+Route::prefix('/v1/auth')->name('api.v1.auth.')->group(function (): void {
+    Route::post('/register', [AuthController::class, 'register'])
+        ->middleware('throttle:5,1')
+        ->name('register');
+    Route::post('/login', [AuthController::class, 'login'])
+        ->middleware('throttle:10,1')
+        ->name('login');
+});
+
+Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
+    Route::post('/v1/auth/logout', [AuthController::class, 'logout'])
+        ->name('api.v1.auth.logout');
+
     Route::get('/v1/user', function (Request $request) {
         return response()->json([
             'user' => $request->user()->only(['id', 'name', 'email']),

@@ -15,6 +15,11 @@ class WebDashboardTest extends TestCase
             ->assertSee('অনুমোদন')
             ->assertSee('Sanctum API token')
             ->assertSee('mobile-navigation')
+            ->assertSee('mobile-more-button')
+            ->assertSee('Brain ও model routing')
+            ->assertSee('Auto')
+            ->assertSee('Fixed')
+            ->assertSee('Custom')
             ->assertSee('Sandbox mode');
     }
 }

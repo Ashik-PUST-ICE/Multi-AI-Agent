@@ -3,27 +3,56 @@
 namespace App\Llm;
 
 use App\Models\User;
+use App\Services\ModelRouter;
 use InvalidArgumentException;
 
 class UserLlmProviderResolver
 {
     public function __construct(
-        private readonly ProviderCatalog $catalog,
+        private readonly ModelRouter $modelRouter,
         private readonly ProviderFactory $providerFactory,
+        private readonly ProviderCatalog $catalog,
     ) {}
 
     /**
-     * @return array{provider: LlmProvider, model: string}
+     * @return array{provider: LlmProvider, model: string, routing: array<string, mixed>, fallbacks: list<array{provider: LlmProvider, model: string, selection: array{provider: string, model: string}}>}
      */
-    public function resolve(User $user, string $agentName, string $mode = TASK_MODE_SANDBOX): array
-    {
-        $modelSelection = $this->selectedModel($user, $agentName, $mode);
+    public function resolve(
+        User $user,
+        string $agentName,
+        string $mode = TASK_MODE_SANDBOX,
+        ?string $prompt = null,
+    ): array {
+        $modelSelection = $this->routingDecision($user, $agentName, $mode, null, true, $prompt);
         $providerId = $modelSelection['provider'];
         $modelId = $modelSelection['model'];
-        $providerCredentials = $user->apiKeys()->where('provider', $providerId)->first();
 
-        if ($providerCredentials === null) {
+        if (! $this->hasConfiguredCredentials($user, $providerId)) {
             throw new InvalidArgumentException('Save credentials for the selected provider before running an agent.');
+        }
+
+        $providerCredentials = $user->apiKeys()->where('provider', $providerId)->firstOrFail();
+        $fallbackProviders = [];
+        foreach ($modelSelection['fallback_candidates'] as $fallbackSelection) {
+            if (! $this->hasConfiguredCredentials($user, $fallbackSelection['provider'])) {
+                continue;
+            }
+
+            $fallbackCredentials = $user->apiKeys()
+                ->where('provider', $fallbackSelection['provider'])
+                ->firstOrFail();
+
+            $fallbackProviders[] = [
+                'provider' => $this->providerFactory->create(
+                    $fallbackSelection['provider'],
+                    $fallbackSelection['model'],
+                    $fallbackCredentials->api_key,
+                    $fallbackCredentials->base_url,
+                    $user,
+                ),
+                'model' => $fallbackSelection['model'],
+                'selection' => $fallbackSelection,
+            ];
         }
 
         return [
@@ -35,107 +64,69 @@ class UserLlmProviderResolver
                 $user,
             ),
             'model' => $modelId,
+            'routing' => $modelSelection,
+            'fallbacks' => $fallbackProviders,
         ];
     }
 
     /**
      * Resolve only the approved model selection without constructing a provider.
      *
-     * @return array{provider: string, model: string}
+     * @return array{provider: string, model: string, brain_mode: string, policy: string, complexity: string, settings_fingerprint: string, reason: string, fallback_candidates: list<array{provider: string, model: string}>}
      */
     public function selectedModel(
         User $user,
         string $agentName,
         string $mode = TASK_MODE_LIVE,
+        ?string $brainModeOverride = null,
+        bool $requireConfiguredCredentials = false,
+        ?string $prompt = null,
     ): array {
-        $settings = $user->llmSettings;
-
-        if ($settings === null) {
-            throw new InvalidArgumentException('Save provider settings and approve a model before running an agent.');
-        }
-
-        $agentChoice = $settings->agent_models[$agentName] ?? null;
-        $providerId = $agentChoice['provider'] ?? $settings->provider;
-        $modelId = $agentChoice['model'] ?? $settings->model;
-        $approvedModels = $settings->approved_models ?? [];
-
-        if ($mode === TASK_MODE_SANDBOX) {
-            [$providerId, $modelId] = $this->leastExpensiveApprovedModel(
-                $settings->model_pricing ?? [],
-                $approvedModels,
-                $providerId,
-                $modelId,
-            );
-        }
-
-        $this->assertModelIsApproved($approvedModels, $providerId, $modelId);
-
-        $this->catalog->model($providerId, $modelId);
-
-        return [
-            'provider' => $providerId,
-            'model' => $modelId,
-        ];
-    }
-
-    /**
-     * @param  array<int, array<string, mixed>>  $modelPricing
-     * @param  array<int, array{provider?: string, model?: string}>  $approvedModels
-     * @return array{string, string}
-     */
-    private function leastExpensiveApprovedModel(
-        array $modelPricing,
-        array $approvedModels,
-        string $fallbackProvider,
-        string $fallbackModel,
-    ): array {
-        $approvedKeys = [];
-        foreach ($approvedModels as $approvedModel) {
-            $approvedKeys[($approvedModel['provider'] ?? '').':'.($approvedModel['model'] ?? '')] = true;
-        }
-
-        $approvedPricing = array_values(array_filter(
-            $modelPricing,
-            static fn (array $pricing): bool => isset(
-                $approvedKeys[($pricing['provider'] ?? '').':'.($pricing['model'] ?? '')],
-            ),
-        ));
-        $currencies = array_unique(array_column($approvedPricing, 'currency'));
-
-        if (count($currencies) !== 1) {
-            return [$fallbackProvider, $fallbackModel];
-        }
-
-        usort(
-            $approvedPricing,
-            static fn (array $left, array $right): int => (
-                ($left['input_cost_per_million'] + $left['output_cost_per_million'])
-                <=> ($right['input_cost_per_million'] + $right['output_cost_per_million'])
-            ),
+        return $this->routingDecision(
+            $user,
+            $agentName,
+            $mode,
+            $brainModeOverride,
+            $requireConfiguredCredentials,
+            $prompt,
         );
-        $leastExpensive = $approvedPricing[0] ?? null;
-
-        if ($leastExpensive === null) {
-            return [$fallbackProvider, $fallbackModel];
-        }
-
-        return [$leastExpensive['provider'], $leastExpensive['model']];
     }
 
     /**
-     * @param  array<int, array{provider?: string, model?: string}>  $approvedModels
+     * @return array{provider: string, model: string, brain_mode: string, policy: string, complexity: string, settings_fingerprint: string, reason: string, fallback_candidates: list<array{provider: string, model: string}>}
      */
-    private function assertModelIsApproved(array $approvedModels, string $providerId, string $modelId): void
-    {
-        foreach ($approvedModels as $approvedModel) {
-            $isApproved = ($approvedModel['provider'] ?? null) === $providerId
-                && ($approvedModel['model'] ?? null) === $modelId;
+    public function routingDecision(
+        User $user,
+        string $agentName,
+        string $mode,
+        ?string $brainModeOverride = null,
+        bool $requireConfiguredCredentials = false,
+        ?string $prompt = null,
+    ): array {
+        return $this->modelRouter->select(
+            $user,
+            $agentName,
+            $mode,
+            $brainModeOverride,
+            $requireConfiguredCredentials,
+            $prompt,
+        );
+    }
 
-            if ($isApproved) {
-                return;
-            }
+    public function hasConfiguredCredentials(User $user, string $providerId): bool
+    {
+        $provider = $this->catalog->provider($providerId);
+        $credentials = $user->apiKeys()->where('provider', $providerId)->first();
+
+        if ($credentials === null) {
+            return false;
         }
 
-        throw new InvalidArgumentException('The selected agent model is not approved in Settings.');
+        if ($provider['requires_api_key']) {
+            return is_string($credentials->api_key) && trim($credentials->api_key) !== '';
+        }
+
+        return ! $provider['custom_base_url']
+            || (is_string($credentials->base_url) && trim($credentials->base_url) !== '');
     }
 }

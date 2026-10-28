@@ -23,10 +23,11 @@ Laravel API-first multi-agent workspace. The Milestone 1 web client submits task
 
    ```sh
    php artisan migrate
+   php artisan db:seed
    php artisan db:seed --class='Database\Seeders\AgentSpecSeeder'
    ```
 
-   The seeder registers the initial four versioned agent specifications and the `agent_specs.manage` permission.
+   The default seeder registers the `user` and `admin` roles and the `agent_specs.manage` permission. The agent-spec seeder registers the initial four versioned agent specifications.
 
 3. Install frontend dependencies and build the client:
 
@@ -46,7 +47,7 @@ Laravel API-first multi-agent workspace. The Milestone 1 web client submits task
 
 ## Web client authentication
 
-The browser client calls the same authenticated `/api/v1` endpoints as other clients. It accepts a Sanctum personal access token and keeps it in the current browser tab's `sessionStorage`; disconnecting or closing the tab clears it.
+Users can register or sign in from the browser client. Registration creates a private workspace and assigns only the `user` role. Login and registration return a Sanctum personal access token; the browser keeps it in the current tab's `sessionStorage`, and logout revokes the current token. The client also accepts a manually issued token for existing accounts.
 
 To issue a token for an existing user from Tinker:
 
@@ -59,12 +60,16 @@ $user = App\Models\User::findOrFail(1);
 $user->createToken('web-dashboard')->plainTextToken;
 ```
 
-Paste the returned token into the dashboard's API token field. Never paste a token into source code, `.env`, screenshots, or shared logs.
+Paste the returned token into the dashboard's API token field. Never paste a token into source code, `.env`, screenshots, or shared logs. Registration requires a password with at least 12 characters, including letters and numbers.
 
 ## API endpoints
 
 | Method | Endpoint | Purpose |
 |---|---|---|
+| `POST` | `/api/v1/auth/register` | Register a user, create a private workspace, and issue a token |
+| `POST` | `/api/v1/auth/login` | Authenticate an active user and issue a token |
+| `POST` | `/api/v1/auth/logout` | Revoke the current token |
+| `GET` | `/api/v1/user` | Return the authenticated user's account |
 | `GET` | `/api/v1/tasks` | List the authenticated user's tasks |
 | `POST` | `/api/v1/tasks/estimate` | Preview routing, token ceiling, and available user-entered price estimates |
 | `POST` | `/api/v1/tasks` | Create and queue a sandbox task |
@@ -88,7 +93,11 @@ Sensitive live tools require owner approval for the exact tool input; approval r
 
 The complexity router sends a request to one agent by default and selects the four-agent pipeline only for an explicitly combined request. The web client displays the route and budget estimate before requiring a second submit to start. Per-agent and per-task token ceilings are hard limits; estimated input that leaves no room for a response is rejected. Provider-reported usage is stored per agent run, with a conservative text-based estimate when a provider omits usage metadata.
 
-Users may optionally submit `model_pricing` entries with provider, model, currency, and input/output cost per million tokens to `PUT /api/v1/llm/settings`. Rates are accepted only for approved models. The estimate endpoint reports cost as unavailable when a selected model lacks a rate or route currencies differ; it never substitutes invented prices.
+Users may optionally submit `model_pricing` entries with provider, model, currency, and input/output cost per million tokens to `PUT /api/v1/llm/settings`. Rates are accepted only for approved models. The estimate endpoint reports cost as unavailable when a selected model or configured fallback lacks a rate or route currencies differ; it never substitutes invented prices. Maximum estimates include one bounded fallback attempt at the same token ceiling.
+
+The Brain page lets users set each initial agent to Auto, Fixed, or Custom, choose a cheapest/balanced/best-quality Auto policy, approve models, enter their own rates, configure one explicitly selected fallback, and save provider credentials. Auto capability-filters approved models against the active agent specification and estimates prompt complexity from its length and explicit complexity cues. Cheapest uses comparable user-entered rates; balanced raises its minimum context-window percentile for more complex prompts and chooses the least expensive compatible model above that threshold. No verified quality evaluation exists yet, so best-quality explicitly uses the configured default when compatible and reports that quality could not be verified. The task estimate compares Auto and Fixed costs and marks evaluation results unavailable.
+
+Routing decisions, rationale, and a fallback attempt are recorded as run events. A single user-selected fallback may be tried only for retryable provider failures before any output or tool call; it must also be approved, capability-compatible, and have configured credentials. The selection is never inferred to be "stronger" without evaluation data. Each Sandbox run records a fingerprint of its Brain settings, and Live transition is blocked if the settings changed since that run. Brain settings do not change task mode or trust level. Routing evaluation and improvement proposals are unavailable until a trusted evaluation test set and results exist; no routing preference is changed automatically.
 
 Agent specifications define role, schemas, permitted tools, trust metadata, token/step/timeout limits, stop conditions, and success criteria. Agent-to-agent handoffs use versioned structured envelopes and only the context required for the next stage. Invalid agent output gets one schema-correction attempt and fails if it remains invalid. Admin specification routes require the Spatie `agent_specs.manage` permission; model choices still come only from the user's approved settings.
 

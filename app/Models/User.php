@@ -5,6 +5,7 @@ namespace App\Models;
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
@@ -52,6 +53,15 @@ class User extends Authenticatable
         static::creating(function (self $user): void {
             $user->uuid ??= (string) Str::uuid();
         });
+
+        static::created(function (self $user): void {
+            if ($user->tenant_id !== null) {
+                return;
+            }
+
+            $tenant = Tenant::query()->create(['name' => "{$user->name}'s Workspace"]);
+            $user->forceFill(['tenant_id' => $tenant->id])->saveQuietly();
+        });
     }
 
     /**
@@ -77,6 +87,11 @@ class User extends Authenticatable
     public function tasks(): HasMany
     {
         return $this->hasMany(Task::class);
+    }
+
+    public function tenant(): BelongsTo
+    {
+        return $this->belongsTo(Tenant::class);
     }
 
     public function llmSettings(): HasOne

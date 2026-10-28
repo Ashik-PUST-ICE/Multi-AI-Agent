@@ -4,12 +4,14 @@ namespace App\Agents;
 
 use App\Llm\ChatResponse;
 use App\Llm\LlmProvider;
+use App\Llm\ProviderRequestException;
 use App\Llm\UserLlmProviderResolver;
 use App\Models\AgentRun;
 use App\Models\User;
 use App\Services\AgentActivityLogger;
 use App\Services\TaskTokenBudgetService;
 use App\Tools\ToolRegistry;
+use Illuminate\Http\Client\ConnectionException;
 use InvalidArgumentException;
 use RuntimeException;
 
@@ -70,7 +72,12 @@ abstract class BaseAgent
         }
 
         $executionMode = $agentRun?->mode ?? $agentRun?->task?->mode ?? $this->mode;
-        $resolvedProvider = $this->userProviderResolver->resolve($user, $this->name(), $executionMode);
+        $resolvedProvider = $this->userProviderResolver->resolve(
+            $user,
+            $this->name(),
+            $executionMode,
+            $input,
+        );
 
         return $this->runWithProvider(
             $resolvedProvider['provider'],
@@ -79,6 +86,8 @@ abstract class BaseAgent
             $resolvedProvider['model'],
             $agentRun,
             $this->approvedCallSignatures($agentRun),
+            $resolvedProvider['routing'],
+            $resolvedProvider['fallbacks'],
         );
     }
 
@@ -93,6 +102,8 @@ abstract class BaseAgent
         ?string $model = null,
         ?AgentRun $agentRun = null,
         array $approvedCallSignatures = [],
+        array $routing = [],
+        array $fallbacks = [],
     ): array {
         $normalizedInput = $this->normalizeInput($input);
         $agentRegistry = $this->agentRegistry ?? app(AgentRegistry::class);
@@ -113,6 +124,8 @@ abstract class BaseAgent
         );
         $usage = $agentRun?->token_usage ?? [];
         $toolCallCount = 0;
+        $activeProvider = $provider;
+        $activeModel = $model;
         $maximumSteps = max(1, (int) ($agentSpecification['max_steps'] ?? self::MAX_TOOL_ITERATIONS));
         $agentTokenLimit = max(1, (int) ($agentSpecification['max_tokens'] ?? 2000));
         $this->recordInitialMessages($agentRun, $messages);
@@ -121,18 +134,51 @@ abstract class BaseAgent
             'model' => $model,
             'mode' => $this->mode,
             'spec_version' => $agentSpecification['version'] ?? 1,
+            'routing' => [
+                'brain_mode' => $routing['brain_mode'] ?? null,
+                'policy' => $routing['policy'] ?? null,
+                'complexity' => $routing['complexity'] ?? null,
+                'settings_fingerprint' => $routing['settings_fingerprint'] ?? null,
+                'reason' => $routing['reason'] ?? null,
+            ],
         ]);
 
         for ($iteration = 0; $iteration < $maximumSteps; $iteration++) {
-            $response = $this->requestResponse(
-                $provider,
-                $messages,
-                $allowedTools,
-                $model,
-                $agentTokenLimit,
-                $agentRun,
-                $usage,
-            );
+            try {
+                $response = $this->requestResponse(
+                    $activeProvider,
+                    $messages,
+                    $allowedTools,
+                    $activeModel,
+                    $agentTokenLimit,
+                    $agentRun,
+                    $usage,
+                );
+            } catch (ProviderRequestException $exception) {
+                if (! $exception->retryable || $iteration !== 0 || $fallbacks === []) {
+                    throw $exception;
+                }
+
+                $fallback = array_shift($fallbacks);
+                $activeProvider = $fallback['provider'];
+                $activeModel = $fallback['model'];
+                $this->activityLogger?->recordEvent($agentRun, 'agent.model_fallback', [
+                    'from_provider' => $routing['provider'] ?? null,
+                    'from_model' => $routing['model'] ?? $model,
+                    'to_provider' => $fallback['selection']['provider'],
+                    'to_model' => $fallback['model'],
+                    'reason' => 'The primary provider request failed before an agent response or tool call.',
+                ]);
+                $response = $this->requestResponse(
+                    $fallback['provider'],
+                    $messages,
+                    $allowedTools,
+                    $fallback['model'],
+                    $agentTokenLimit,
+                    $agentRun,
+                    $usage,
+                );
+            }
             $this->recordAssistantResponse($agentRun, $response, $iteration);
 
             if ($response->toolCalls === []) {
@@ -141,12 +187,12 @@ abstract class BaseAgent
 
                 if ($outputErrors !== []) {
                     $result = $this->correctInvalidOutput(
-                        $provider,
+                        $activeProvider,
                         $messages,
                         $result,
                         $outputErrors,
                         $agentSpecification['output_schema'],
-                        $model,
+                        $activeModel,
                         $agentTokenLimit,
                         $agentRun,
                         $usage,
@@ -284,7 +330,15 @@ abstract class BaseAgent
             $options['model'] = $model;
         }
 
-        $response = $provider->chat($messages, $toolDefinitions, $options);
+        try {
+            $response = $provider->chat($messages, $toolDefinitions, $options);
+        } catch (ConnectionException $exception) {
+            throw new ProviderRequestException(
+                'The selected LLM provider connection failed.',
+                true,
+                $exception,
+            );
+        }
         $responseUsage = $tokenBudgetService->responseUsage($messages, $response);
         $cumulativeUsage = $this->combineUsage($cumulativeUsage, $responseUsage);
 

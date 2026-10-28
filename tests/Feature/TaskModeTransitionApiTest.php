@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Jobs\RunAgentJob;
 use App\Llm\ProviderCatalog;
+use App\Llm\UserLlmProviderResolver;
 use App\Models\ModeTransition;
 use App\Models\Task;
 use App\Models\User;
@@ -108,12 +109,32 @@ class TaskModeTransitionApiTest extends TestCase
             'mode' => TASK_MODE_SANDBOX,
             'status' => TASK_STATUS_COMPLETED,
         ]);
-        $sourceTask->agentRuns()->create([
+        $agentRun = $sourceTask->agentRuns()->create([
             'agent_name' => 'Writer',
             'mode' => TASK_MODE_SANDBOX,
             'status' => AGENT_RUN_STATUS_COMPLETED,
             'input' => ['prompt' => 'A reviewed request.', 'context' => []],
             'output' => ['text' => 'Reviewed sandbox output.'],
+        ]);
+        $routing = app(UserLlmProviderResolver::class)->selectedModel(
+            $user,
+            'Writer',
+            TASK_MODE_SANDBOX,
+            null,
+            false,
+            'A reviewed request.',
+        );
+        $sourceTask->runEvents()->create([
+            'agent_run_id' => $agentRun->id,
+            'event_type' => 'agent.started',
+            'mode' => TASK_MODE_SANDBOX,
+            'sequence' => 1,
+            'payload' => [
+                'agent' => 'Writer',
+                'routing' => [
+                    'settings_fingerprint' => $routing['settings_fingerprint'],
+                ],
+            ],
         ]);
         foreach (['evaluation.passed', 'skeptic.approved'] as $eventType) {
             $sourceTask->runEvents()->create([
@@ -125,6 +146,19 @@ class TaskModeTransitionApiTest extends TestCase
         }
         Sanctum::actingAs($user);
 
+        $settings = $user->llmSettings;
+        $settings->routing_policy = MODEL_ROUTING_POLICY_BALANCED;
+        $settings->save();
+        $this->postJson("/api/v1/tasks/{$sourceTask->id}/transition-to-live", [
+            'confirm_live_transition' => true,
+        ])->assertUnprocessable()
+            ->assertJsonPath(
+                'transition.blocked_requirements.0',
+                'brain_settings_changed_after_sandbox_for_Writer',
+            );
+
+        $settings->routing_policy = MODEL_ROUTING_POLICY_CHEAPEST;
+        $settings->save();
         $response = $this->postJson("/api/v1/tasks/{$sourceTask->id}/transition-to-live", [
             'confirm_live_transition' => true,
         ])->assertAccepted()
@@ -134,7 +168,9 @@ class TaskModeTransitionApiTest extends TestCase
 
         $liveTaskId = $response->json('task.id');
         $liveTask = Task::query()->findOrFail($liveTaskId);
-        $transition = ModeTransition::query()->firstOrFail();
+        $transition = ModeTransition::query()
+            ->where('status', MODE_TRANSITION_STATUS_APPLIED)
+            ->firstOrFail();
 
         $this->assertSame(TASK_MODE_SANDBOX, $sourceTask->fresh()->mode);
         $this->assertSame(TASK_MODE_LIVE, $liveTask->mode);

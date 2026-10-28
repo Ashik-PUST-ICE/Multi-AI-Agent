@@ -2,7 +2,8 @@
 
 namespace Database\Seeders;
 
-use App\Models\User;
+use App\Models\Permission;
+use App\Models\Role;
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
 
@@ -15,11 +16,26 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
-        // User::factory(10)->create();
-
-        User::factory()->create([
-            'name' => 'Test User',
-            'email' => 'test@example.com',
-        ]);
+        Role::query()->firstOrCreate(
+            ['name' => 'user', 'guard_name' => 'web'],
+            [
+                'display_name' => 'User',
+                'status' => STATUS_ACTIVE,
+                'user_type' => USER_ROLE_USER,
+            ],
+        );
+        $adminRole = Role::query()->firstOrCreate(
+            ['name' => 'admin', 'guard_name' => 'web'],
+            [
+                'display_name' => 'Admin',
+                'status' => STATUS_ACTIVE,
+                'user_type' => USER_ROLE_ADMIN,
+            ],
+        );
+        $agentSpecsPermission = Permission::query()->firstOrCreate(
+            ['name' => 'agent_specs.manage', 'guard_name' => 'web'],
+            ['display_name' => 'Manage agent specifications', 'module' => 1],
+        );
+        $adminRole->givePermissionTo($agentSpecsPermission);
     }
 }

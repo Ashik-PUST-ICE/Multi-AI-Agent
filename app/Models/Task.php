@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\BelongsToTenant;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -9,6 +10,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Task extends Model
 {
+    use BelongsToTenant;
     use SoftDeletes;
 
     protected $attributes = [
@@ -18,6 +20,7 @@ class Task extends Model
 
     protected $fillable = [
         'user_id',
+        'tenant_id',
         'title',
         'description',
         'status',
@@ -43,6 +46,11 @@ class Task extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function tenant(): BelongsTo
+    {
+        return $this->belongsTo(Tenant::class);
     }
 
     public function agentRuns(): HasMany

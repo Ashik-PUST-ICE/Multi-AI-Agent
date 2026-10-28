@@ -6,8 +6,10 @@ use App\Agents\AgentFactory;
 use App\Agents\AgentMessageEnvelope;
 use App\Models\AgentRun;
 use App\Models\PendingApproval;
+use App\Models\Scopes\TenantScope;
 use App\Models\Task;
 use App\Models\User;
+use App\Tenancy\TenantContext;
 use App\Tools\ToolApprovalRequiredException;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
@@ -23,6 +25,25 @@ class AgentRunService
 
     public function run(int $agentRunId): void
     {
+        $tenantContext = app(TenantContext::class);
+        if (! $tenantContext->isInitialized()) {
+            $unscopedAgentRun = AgentRun::with([
+                'task' => static fn ($query) => $query->withoutGlobalScope(TenantScope::class),
+            ])->findOrFail($agentRunId);
+            $tenantId = $unscopedAgentRun->task?->tenant_id;
+
+            if ($tenantId !== null) {
+                $tenantContext->initialize((int) $tenantId);
+                try {
+                    $this->run($agentRunId);
+                } finally {
+                    $tenantContext->clear();
+                }
+
+                return;
+            }
+        }
+
         $agentRun = AgentRun::with(['task.user'])->findOrFail($agentRunId);
         $task = $agentRun->task;
 
@@ -97,6 +118,25 @@ class AgentRunService
 
     public function fail(int $agentRunId, Throwable $exception): void
     {
+        $tenantContext = app(TenantContext::class);
+        if (! $tenantContext->isInitialized()) {
+            $unscopedAgentRun = AgentRun::with([
+                'task' => static fn ($query) => $query->withoutGlobalScope(TenantScope::class),
+            ])->find($agentRunId);
+            $tenantId = $unscopedAgentRun?->task?->tenant_id;
+
+            if ($tenantId !== null) {
+                $tenantContext->initialize((int) $tenantId);
+                try {
+                    $this->fail($agentRunId, $exception);
+                } finally {
+                    $tenantContext->clear();
+                }
+
+                return;
+            }
+        }
+
         DB::transaction(function () use ($agentRunId, $exception): void {
             $agentRun = AgentRun::with('task')->find($agentRunId);
 

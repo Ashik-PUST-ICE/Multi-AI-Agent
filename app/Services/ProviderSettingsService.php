@@ -15,6 +15,8 @@ class ProviderSettingsService
 {
     use ResponseTrait;
 
+    private const SUPPORTED_AGENTS = ['Orchestrator', 'Research', 'Writer', 'Reviewer'];
+
     public function __construct(
         private readonly ProviderCatalog $catalog,
         private readonly ProviderFactory $providerFactory,
@@ -36,7 +38,7 @@ class ProviderSettingsService
 
         foreach ($apiKeys as $apiKey) {
             $keyStatuses[$apiKey->provider] = [
-                'configured' => $apiKey->api_key !== null,
+                'configured' => $apiKey->api_key !== null || $apiKey->base_url !== null,
                 'masked' => $apiKey->maskedKey(),
                 'custom_base_url' => $apiKey->base_url,
             ];
@@ -51,6 +53,8 @@ class ProviderSettingsService
                 'fallback_provider',
                 'fallback_model',
                 'model_pricing',
+                'agent_brains',
+                'routing_policy',
             ]),
             'keys' => $keyStatuses,
             'catalog' => $this->catalog->publicCatalog(),
@@ -66,6 +70,7 @@ class ProviderSettingsService
     {
         try {
             $approvedModels = $this->normalizeApprovedModels($data['approved_models']);
+            $existingSettings = $user->llmSettings()->first();
             $providerId = $data['provider'];
             $modelId = $data['model'];
             $this->assertApprovedModel($approvedModels, $providerId, $modelId);
@@ -77,8 +82,20 @@ class ProviderSettingsService
                 $this->assertApprovedModel($approvedModels, $fallbackProvider, $fallbackModel);
             }
 
-            $agentModels = $this->normalizeAgentModels($data['agent_models'] ?? [], $approvedModels);
-            $existingPricing = $user->llmSettings()->first()?->model_pricing ?? [];
+            $agentModels = $this->normalizeAgentModels(
+                $data['agent_models'] ?? $existingSettings?->agent_models ?? [],
+                $approvedModels,
+            );
+            $agentBrains = $this->normalizeAgentBrains(
+                $data['agent_brains'] ?? $existingSettings?->agent_brains ?? [],
+            );
+
+            foreach ($agentBrains as $agentName => $brainMode) {
+                if ($brainMode === AGENT_BRAIN_MODE_CUSTOM && ! isset($agentModels[$agentName])) {
+                    throw new InvalidArgumentException("Agent [{$agentName}] must have a selected model in Custom mode.");
+                }
+            }
+            $existingPricing = $existingSettings?->model_pricing ?? [];
             $pricingData = array_key_exists('model_pricing', $data)
                 ? $data['model_pricing']
                 : $this->retainApprovedModelPricing($existingPricing, $approvedModels);
@@ -92,6 +109,10 @@ class ProviderSettingsService
                 'model' => $modelId,
                 'approved_models' => $approvedModels,
                 'agent_models' => $agentModels,
+                'agent_brains' => $agentBrains,
+                'routing_policy' => $data['routing_policy']
+                    ?? $existingSettings?->routing_policy
+                    ?? MODEL_ROUTING_POLICY_CHEAPEST,
                 'fallback_provider' => $fallbackProvider,
                 'fallback_model' => $fallbackModel,
                 'model_pricing' => $modelPricing,
@@ -108,6 +129,8 @@ class ProviderSettingsService
             'fallback_provider',
             'fallback_model',
             'model_pricing',
+            'agent_brains',
+            'routing_policy',
         ]);
 
         return $this->success(
@@ -158,7 +181,7 @@ class ProviderSettingsService
 
         $keyData = [
             'provider' => $providerId,
-            'configured' => $apiKeyRecord->api_key !== null,
+            'configured' => $apiKeyRecord->api_key !== null || $apiKeyRecord->base_url !== null,
             'masked_key' => $apiKeyRecord->maskedKey(),
             'custom_base_url' => $apiKeyRecord->base_url,
         ];
@@ -304,6 +327,10 @@ class ProviderSettingsService
         $normalizedModels = [];
 
         foreach ($agentModels as $agentName => $modelChoice) {
+            if (! in_array($agentName, self::SUPPORTED_AGENTS, true)) {
+                throw new InvalidArgumentException("Agent [{$agentName}] is not available for Brain routing.");
+            }
+
             $providerId = $modelChoice['provider'];
             $modelId = $modelChoice['model'];
             $this->assertApprovedModel($approvedModels, $providerId, $modelId);
@@ -314,6 +341,25 @@ class ProviderSettingsService
         }
 
         return $normalizedModels;
+    }
+
+    /**
+     * @param  array<string, string>  $agentBrains
+     * @return array<string, string>
+     */
+    private function normalizeAgentBrains(array $agentBrains): array
+    {
+        $normalizedBrains = [];
+
+        foreach ($agentBrains as $agentName => $brainMode) {
+            if (! in_array($agentName, self::SUPPORTED_AGENTS, true)) {
+                throw new InvalidArgumentException("Agent [{$agentName}] is not available for Brain routing.");
+            }
+
+            $normalizedBrains[$agentName] = $brainMode;
+        }
+
+        return $normalizedBrains;
     }
 
     /**

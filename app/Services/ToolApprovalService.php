@@ -11,6 +11,7 @@ use App\Models\User;
 use App\Traits\ResponseTrait;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 
 class ToolApprovalService
@@ -51,6 +52,7 @@ class ToolApprovalService
     {
         $decision = DB::transaction(function () use ($user, $approvalId, $isApproved, $decisionNote): array {
             $approval = $this->approvalForUpdate($user, $approvalId);
+            Gate::forUser($user)->authorize('decide', $approval);
 
             if ($approval->status !== APPROVAL_STATUS_PENDING) {
                 throw new HttpException(409, 'This approval has already been decided.');

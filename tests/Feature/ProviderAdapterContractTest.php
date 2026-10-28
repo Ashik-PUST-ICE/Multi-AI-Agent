@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Llm\ProviderCatalog;
 use App\Llm\ProviderFactory;
+use App\Llm\ProviderRequestException;
 use App\Llm\ResponseNormalizer;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
@@ -178,9 +179,10 @@ class ProviderAdapterContractTest extends TestCase
         try {
             $provider->chat([], [], ['model' => $modelId]);
             $this->fail('A failed provider request must throw.');
-        } catch (\RuntimeException $exception) {
-            $this->assertStringContainsString('401', $exception->getMessage());
+        } catch (ProviderRequestException $exception) {
+            $this->assertFalse($exception->retryable);
             $this->assertStringNotContainsString('private-test-key', $exception->getMessage());
+            $this->assertStringContainsString('401', $exception->getPrevious()->getMessage());
         }
     }
 

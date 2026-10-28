@@ -54,8 +54,13 @@ class TaskDatabaseTest extends TestCase
         $this->assertSame(['source_count' => 0], $message->fresh()->metadata);
         $this->assertSame(['title' => 'Draft'], $approval->fresh()->payload);
         $this->assertSame(['agent' => 'Research'], $event->fresh()->payload);
+        $this->assertTrue(Schema::hasTable('tasks'));
+        $taskForeignKeys = Schema::getForeignKeys('tasks');
+        $this->assertCount(1, $taskForeignKeys);
+        $this->assertSame(['tenant_id'], $taskForeignKeys[0]['columns']);
+        $this->assertSame('tenants', $taskForeignKeys[0]['foreign_table']);
+
         foreach ([
-            'tasks',
             'agent_runs',
             'agent_messages',
             'pending_approvals',
