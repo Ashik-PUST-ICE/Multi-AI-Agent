@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Agents\AgentRegistry;
 use App\Jobs\RunAgentJob;
 use App\Models\AgentRun;
 use App\Models\PendingApproval;
@@ -18,6 +19,7 @@ class ToolApprovalService
 
     public function __construct(
         private readonly AgentActivityLogger $activityLogger,
+        private readonly AgentRegistry $agentRegistry,
     ) {}
 
     public function pendingFor(User $user): JsonResponse
@@ -79,7 +81,10 @@ class ToolApprovalService
                     'approval_id' => $approval->id,
                     'tool_name' => $approval->payload['tool_name'] ?? null,
                 ]);
-                RunAgentJob::dispatch($agentRun->id)->afterCommit();
+                RunAgentJob::dispatch(
+                    $agentRun->id,
+                    $this->agentRegistry->timeoutSeconds($agentRun->agent_name),
+                )->afterCommit();
 
                 return [
                     'expired' => false,

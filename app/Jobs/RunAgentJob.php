@@ -30,8 +30,9 @@ class RunAgentJob implements ShouldQueue
 
     public function __construct(
         public readonly int $agentRunId,
+        ?int $timeoutSeconds = null,
     ) {
-        $this->timeout = (int) config('llm.agent_timeout', 60);
+        $this->timeout = max(1, $timeoutSeconds ?? (int) config('llm.agent_timeout', 60));
     }
 
     public function handle(AgentRunService $agentRunService): void

@@ -88,4 +88,9 @@ class User extends Authenticatable
     {
         return $this->hasMany(UserApiKey::class);
     }
+
+    public function agentSpecs(): HasMany
+    {
+        return $this->hasMany(AgentSpec::class, 'created_by');
+    }
 }

@@ -21,6 +21,7 @@ class AgentFactory
     public function __construct(
         private readonly ToolRegistry $toolRegistry,
         private readonly UserLlmProviderResolver $userLlmProviderResolver,
+        private readonly AgentRegistry $agentRegistry,
     ) {}
 
     public function make(string $agentName, string $mode): BaseAgent
@@ -31,11 +32,15 @@ class AgentFactory
             throw new InvalidArgumentException("Agent [{$agentName}] is not available.");
         }
 
+        $agentSpecification = $this->agentRegistry->activeSpec($agentName);
+
         return app($agentClass, [
             'provider' => null,
             'tools' => $this->toolRegistry,
             'mode' => $mode,
             'userProviderResolver' => $this->userLlmProviderResolver,
+            'specification' => $agentSpecification,
+            'agentRegistry' => $this->agentRegistry,
         ]);
     }
 }

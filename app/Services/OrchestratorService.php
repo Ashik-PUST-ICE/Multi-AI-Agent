@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Agents\AgentMessageEnvelope;
+use App\Agents\AgentRegistry;
 use App\Jobs\RunAgentJob;
 use App\Models\AgentRun;
 use App\Models\Task;
@@ -27,6 +29,10 @@ class OrchestratorService
         'Reviewer',
     ];
 
+    public function __construct(
+        private readonly AgentRegistry $agentRegistry,
+    ) {}
+
     /**
      * @param  array{title: string, prompt: string}  $data
      */
@@ -43,14 +49,23 @@ class OrchestratorService
 
             $firstAgentRun = $task->agentRuns()->create([
                 'agent_name' => self::AGENT_SEQUENCE[0],
-                'input' => [
-                    'prompt' => $data['prompt'],
-                    'context' => [],
-                ],
+                'input' => (new AgentMessageEnvelope(
+                    'user',
+                    self::AGENT_SEQUENCE[0],
+                    $task->id,
+                    'task.created',
+                    [
+                        'prompt' => $data['prompt'],
+                        'context' => [],
+                    ],
+                ))->toArray(),
                 'status' => AGENT_RUN_STATUS_PENDING,
             ]);
 
-            RunAgentJob::dispatch($firstAgentRun->id)->afterCommit();
+            RunAgentJob::dispatch(
+                $firstAgentRun->id,
+                $this->agentRegistry->timeoutSeconds($firstAgentRun->agent_name),
+            )->afterCommit();
 
             return $task;
         });
@@ -71,6 +86,25 @@ class OrchestratorService
             ->findOrFail($taskId);
 
         return $this->success(['task' => $this->taskData($task, true)]);
+    }
+
+    public function index(User $user): JsonResponse
+    {
+        $tasks = $user->tasks()
+            ->latest('id')
+            ->paginate(20);
+
+        return $this->success([
+            'tasks' => $tasks->getCollection()
+                ->map(fn (Task $task): array => $this->taskData($task))
+                ->all(),
+            'pagination' => [
+                'current_page' => $tasks->currentPage(),
+                'last_page' => $tasks->lastPage(),
+                'per_page' => $tasks->perPage(),
+                'total' => $tasks->total(),
+            ],
+        ]);
     }
 
     /**
@@ -108,14 +142,24 @@ class OrchestratorService
             }
 
             $completedRuns = $task->agentRuns()->orderBy('id')->get();
-            $nextInput = $this->buildAgentInput($task, $nextAgentName, $completedRuns);
+            $nextPayload = $this->buildAgentInput($task, $nextAgentName, $completedRuns);
+            $nextInput = (new AgentMessageEnvelope(
+                $agentRun->agent_name,
+                $nextAgentName,
+                $task->id,
+                'agent.handoff',
+                $nextPayload,
+            ))->toArray();
             $nextAgentRun = $task->agentRuns()->create([
                 'agent_name' => $nextAgentName,
                 'input' => $nextInput,
                 'status' => AGENT_RUN_STATUS_PENDING,
             ]);
 
-            RunAgentJob::dispatch($nextAgentRun->id)->afterCommit();
+            RunAgentJob::dispatch(
+                $nextAgentRun->id,
+                $this->agentRegistry->timeoutSeconds($nextAgentRun->agent_name),
+            )->afterCommit();
         });
     }
 

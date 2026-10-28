@@ -1,59 +1,92 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# Multi-AI-Agent
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+Laravel API-first multi-agent workspace. The Milestone 1 web client submits tasks to `/api/v1`, displays agent progress, and lets the task owner decide pending sensitive-tool approvals.
 
-## About Laravel
+## Requirements
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+- PHP 8.2+
+- Composer
+- Node.js and npm
+- MariaDB/MySQL or SQLite
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+## Local setup
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+1. Install PHP dependencies and create the environment file:
 
-## Learning Laravel
+   ```sh
+   composer install
+   copy .env.example .env
+   php artisan key:generate
+   ```
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework. You can also check out [Laravel Learn](https://laravel.com/learn), where you will be guided through building a modern Laravel application.
+2. Configure the database in `.env`, then migrate:
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+   ```sh
+   php artisan migrate
+   php artisan db:seed --class='Database\Seeders\AgentSpecSeeder'
+   ```
 
-## Laravel Sponsors
+   The seeder registers the initial four versioned agent specifications and the `agent_specs.manage` permission.
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the [Laravel Partners program](https://partners.laravel.com).
+3. Install frontend dependencies and build the client:
 
-### Premium Partners
+   ```sh
+   npm install
+   npm run build
+   ```
 
-- **[Vehikl](https://vehikl.com)**
-- **[Tighten Co.](https://tighten.co)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel)**
-- **[DevSquad](https://devsquad.com/hire-laravel-developers)**
-- **[Redberry](https://redberry.international/laravel-development)**
-- **[Active Logic](https://activelogic.com)**
+4. Start Laravel and its queue worker in separate terminals:
 
-## Contributing
+   ```sh
+   php artisan serve
+   php artisan queue:work --tries=3
+   ```
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+   During frontend development, use `npm run dev` instead of `npm run build`.
 
-## Code of Conduct
+## Web client authentication
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+The browser client calls the same authenticated `/api/v1` endpoints as other clients. It accepts a Sanctum personal access token and keeps it in the current browser tab's `sessionStorage`; disconnecting or closing the tab clears it.
 
-## Security Vulnerabilities
+To issue a token for an existing user from Tinker:
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+```sh
+php artisan tinker
+```
 
-## License
+```php
+$user = App\Models\User::findOrFail(1);
+$user->createToken('web-dashboard')->plainTextToken;
+```
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+Paste the returned token into the dashboard's API token field. Never paste a token into source code, `.env`, screenshots, or shared logs.
+
+## API endpoints
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `GET` | `/api/v1/tasks` | List the authenticated user's tasks |
+| `POST` | `/api/v1/tasks` | Create and queue a sandbox task |
+| `GET` | `/api/v1/tasks/{task}` | View task and agent-run status |
+| `GET` | `/api/v1/approvals` | List the user's pending tool approvals |
+| `POST` | `/api/v1/approvals/{approval}/approve` | Approve the exact pending action |
+| `POST` | `/api/v1/approvals/{approval}/reject` | Reject the pending action |
+| `GET` | `/api/v1/admin/agent-specs` | List agent specifications and versions (requires `agent_specs.manage`) |
+| `POST` | `/api/v1/admin/agent-specs/{agentName}/versions` | Create a draft spec version |
+| `PATCH` | `/api/v1/admin/agent-specs/{agentName}/versions/{version}` | Edit a draft spec |
+| `POST` | `/api/v1/admin/agent-specs/{agentName}/versions/{version}/status` | Advance draft → test → active |
+| `POST` | `/api/v1/admin/agent-specs/{agentName}/versions/{version}/rollback` | Create a new draft from an earlier version |
+
+Task submission accepts `title` and `prompt`. New tasks run in sandbox mode. Sensitive live tools require owner approval for the exact tool input; approval requests expire and are rejected when expired. Live web search remains disabled until its security adapter is implemented.
+
+Agent specifications define role, schemas, permitted tools, trust metadata, token/step/timeout limits, stop conditions, and success criteria. Agent-to-agent handoffs use versioned structured envelopes. Invalid agent output gets one schema-correction attempt and fails if it remains invalid. Admin specification routes require the Spatie `agent_specs.manage` permission; model choices still come only from the user's approved settings.
+
+LLM provider, model, timeout, and tool-call settings are controlled by application settings/configuration. User API keys are encrypted at rest; never add provider credentials to source code or commit them.
+
+## Validation
+
+```sh
+php artisan test
+vendor/bin/pint --test
+npm run build
+```

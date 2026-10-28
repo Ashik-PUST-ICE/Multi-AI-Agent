@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Agents\AgentFactory;
+use App\Agents\AgentMessageEnvelope;
 use App\Models\AgentRun;
 use App\Models\PendingApproval;
 use App\Models\Task;
@@ -40,9 +41,9 @@ class AgentRunService
         }
 
         $this->markStarted($agentRun);
-        $agentInput = $agentRun->input ?? [];
-        $prompt = $agentInput['prompt'] ?? null;
-        $context = $agentInput['context'] ?? [];
+        $agentInput = $this->messageEnvelope($agentRun, $task);
+        $prompt = $agentInput->payload['prompt'] ?? null;
+        $context = $agentInput->payload['context'] ?? [];
 
         if (! is_string($prompt) || ! is_array($context)) {
             throw new RuntimeException('The queued agent input is invalid.');
@@ -58,6 +59,36 @@ class AgentRunService
         }
 
         $this->orchestratorService->completeAgentRun($agentRun->id, $output);
+    }
+
+    private function messageEnvelope(AgentRun $agentRun, Task $task): AgentMessageEnvelope
+    {
+        $agentInput = $agentRun->input ?? [];
+
+        if (array_key_exists('schema_version', $agentInput)) {
+            $messageEnvelope = AgentMessageEnvelope::fromArray($agentInput);
+        } else {
+            $prompt = $agentInput['prompt'] ?? null;
+            $context = $agentInput['context'] ?? [];
+
+            if (! is_string($prompt) || ! is_array($context)) {
+                throw new RuntimeException('The queued agent message envelope is invalid.');
+            }
+
+            $messageEnvelope = new AgentMessageEnvelope(
+                'task',
+                $agentRun->agent_name,
+                $task->id,
+                'task.input',
+                ['prompt' => $prompt, 'context' => $context],
+            );
+        }
+
+        if ($messageEnvelope->taskId !== $task->id || $messageEnvelope->to !== $agentRun->agent_name) {
+            throw new RuntimeException('The queued agent message is not addressed to this run.');
+        }
+
+        return $messageEnvelope;
     }
 
     public function fail(int $agentRunId, Throwable $exception): void

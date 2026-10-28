@@ -22,6 +22,11 @@ class TaskController extends Controller
         return $this->orchestratorService->submit($user, $validatedData);
     }
 
+    public function index(Request $request): JsonResponse
+    {
+        return $this->orchestratorService->index($request->user());
+    }
+
     public function show(Request $request, int $task): JsonResponse
     {
         return $this->orchestratorService->show($request->user(), $task);
