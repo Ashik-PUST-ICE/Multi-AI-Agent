@@ -1,0 +1,60 @@
+
+# Logs
+*.log
+npm-debug.log
+yarn-error.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment and credentials
+.env
+.env.backup
+.env.production
+/auth.json
+composer.lock
+
+# PHP / Laravel
+.phpactor.json
+.phpunit.result.cache
+/.phpunit.cache
+/storage/*.key
+/storage/pail
+/storage/app
+/storage/installed
+/vendor
+Homestead.json
+Homestead.yaml
+
+# IDEs
+/.fleet
+/.idea
+/.nova
+/.vscode
+/.zed
+/.claude
+
+# Node.js
+/node_modules
+package-lock.json
+
+# Laravel public assets
+/public/build
+/public/hot
+/public/storage
+/public/uploads/
+
+# Language files
+/resources/lang/*.json
+
+# Documents
+*.md
+*.doc
+*.docx
+*.pdf
+*.xls
+*.xlsx
+*.ppt
+*.pptx
+*.txt
