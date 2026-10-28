@@ -62,6 +62,10 @@ $user->createToken('web-dashboard')->plainTextToken;
 
 Paste the returned token into the dashboard's API token field. Never paste a token into source code, `.env`, screenshots, or shared logs. Registration requires a password with at least 12 characters, including letters and numbers.
 
+## Agent Trust Levels
+
+Each user controls their own agent trust levels on the Agents page. Orchestrator, Writer, and Reviewer start at level 0; Research starts at level 1 for read-only tools. Read tools require level 1, write tools level 2, outbound communication level 3, and sensitive actions level 4. A tool call below its declared minimum is blocked before either `simulate()` or `execute()` can run. Live calls at level 2 or above always require approval, in addition to any tool-specific approval rule. When an agent attempts a tool above its current level, the system records the violation and automatically lowers that agent's trust by one level, never below 0. User changes and automatic demotions are kept in per-user history.
+
 ## API endpoints
 
 | Method | Endpoint | Purpose |
@@ -70,6 +74,8 @@ Paste the returned token into the dashboard's API token field. Never paste a tok
 | `POST` | `/api/v1/auth/login` | Authenticate an active user and issue a token |
 | `POST` | `/api/v1/auth/logout` | Revoke the current token |
 | `GET` | `/api/v1/user` | Return the authenticated user's account |
+| `GET` | `/api/v1/trust` | Read the authenticated user's agent trust levels and change history |
+| `PUT` | `/api/v1/trust/{agentName}` | Change one of the authenticated user's agent trust levels, with a reason |
 | `GET` | `/api/v1/tasks` | List the authenticated user's tasks |
 | `POST` | `/api/v1/tasks/estimate` | Preview routing, token ceiling, and available user-entered price estimates |
 | `POST` | `/api/v1/tasks` | Create and queue a sandbox task |

@@ -108,4 +108,14 @@ class User extends Authenticatable
     {
         return $this->hasMany(AgentSpec::class, 'created_by');
     }
+
+    public function agentTrustLevels(): HasMany
+    {
+        return $this->hasMany(AgentTrust::class);
+    }
+
+    public function agentTrustHistory(): HasMany
+    {
+        return $this->hasMany(AgentTrustHistory::class);
+    }
 }

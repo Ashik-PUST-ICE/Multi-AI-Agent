@@ -6,10 +6,15 @@ use App\Agents\BaseAgent;
 use App\Agents\ResearchAgent;
 use App\Llm\ChatResponse;
 use App\Llm\LlmProvider;
+use App\Llm\UserLlmProviderResolver;
+use App\Models\AgentTrust;
+use App\Models\User;
 use App\Tools\ToolApprovalRequiredException;
 use App\Tools\ToolInterface;
 use App\Tools\ToolRegistry;
+use App\Tools\ToolTrustLevelException;
 use App\Tools\WebSearchTool;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Http;
 use InvalidArgumentException;
@@ -18,6 +23,8 @@ use Tests\TestCase;
 
 class AgentFrameworkTest extends TestCase
 {
+    use RefreshDatabase;
+
     public function test_sandbox_always_simulates_tools_and_agent_returns_provider_response(): void
     {
         Http::preventStrayRequests();
@@ -38,6 +45,11 @@ class AgentFrameworkTest extends TestCase
             public function requiresApproval(): bool
             {
                 return false;
+            }
+
+            public function minimumTrustLevel(): int
+            {
+                return AGENT_TRUST_LEVEL_READ;
             }
 
             public function inputSchema(): array
@@ -83,10 +95,13 @@ class AgentFrameworkTest extends TestCase
             }
         };
 
+        $user = $this->userWithTrustLevel('Research', AGENT_TRUST_LEVEL_READ);
+        $resolver = $this->resolverFor($provider);
         $result = App::make(ResearchAgent::class, [
             'provider' => $provider,
             'tools' => $registry,
-        ])->run('Research Laravel', ['source' => 'user input']);
+            'userProviderResolver' => $resolver,
+        ])->runForUser($user, 'Research Laravel', ['source' => 'user input']);
 
         $this->assertFalse($tool->executed);
         $this->assertSame('Search simulated.', $result['text']);
@@ -143,6 +158,21 @@ class AgentFrameworkTest extends TestCase
         $registry->run('web_search', ['query' => 'Laravel'], 'unknown');
     }
 
+    public function test_tool_call_below_its_minimum_trust_level_is_blocked_in_sandbox(): void
+    {
+        $registry = new ToolRegistry;
+        $registry->register(new WebSearchTool);
+
+        try {
+            $registry->run('web_search', ['query' => 'Laravel'], TASK_MODE_SANDBOX);
+            $this->fail('A tool call below its minimum trust level must be blocked.');
+        } catch (ToolTrustLevelException $exception) {
+            $this->assertSame('web_search', $exception->toolName);
+            $this->assertSame(1, $exception->requiredLevel);
+            $this->assertSame(0, $exception->currentLevel);
+        }
+    }
+
     public function test_live_sensitive_tool_requires_approval_for_the_exact_input(): void
     {
         $tool = new class implements ToolInterface
@@ -161,7 +191,12 @@ class AgentFrameworkTest extends TestCase
 
             public function requiresApproval(): bool
             {
-                return true;
+                return false;
+            }
+
+            public function minimumTrustLevel(): int
+            {
+                return 2;
             }
 
             public function inputSchema(): array
@@ -186,7 +221,7 @@ class AgentFrameworkTest extends TestCase
         $input = ['path' => 'reports/result.txt'];
 
         try {
-            $registry->run('write_file', $input, TASK_MODE_LIVE);
+            $registry->run('write_file', $input, TASK_MODE_LIVE, [], 2);
             $this->fail('A sensitive live tool must require approval.');
         } catch (ToolApprovalRequiredException $exception) {
             $this->assertSame('write_file', $exception->toolName);
@@ -194,7 +229,7 @@ class AgentFrameworkTest extends TestCase
         }
 
         $approvalSignature = $registry->approvalSignature('write_file', $input);
-        $result = $registry->run('write_file', $input, TASK_MODE_LIVE, [$approvalSignature]);
+        $result = $registry->run('write_file', $input, TASK_MODE_LIVE, [$approvalSignature], 2);
 
         $this->assertTrue($tool->executed);
         $this->assertSame(['written' => 'reports/result.txt'], $result);
@@ -227,6 +262,11 @@ class AgentFrameworkTest extends TestCase
                 return false;
             }
 
+            public function minimumTrustLevel(): int
+            {
+                return AGENT_TRUST_LEVEL_READ;
+            }
+
             public function inputSchema(): array
             {
                 return ['type' => 'object', 'properties' => []];
@@ -256,7 +296,9 @@ class AgentFrameworkTest extends TestCase
                 ], [], 'tool_calls');
             }
         };
-        $agent = new class($provider, $toolRegistry) extends BaseAgent
+        $user = $this->userWithTrustLevel('LimitedAgent', AGENT_TRUST_LEVEL_READ);
+        $resolver = $this->resolverFor($provider);
+        $agent = new class($provider, $toolRegistry, TASK_MODE_SANDBOX, $resolver) extends BaseAgent
         {
             public function name(): string
             {
@@ -276,7 +318,7 @@ class AgentFrameworkTest extends TestCase
 
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessage('Agent exceeded the maximum number of tool calls.');
-        $agent->run('Check the configured limit.');
+        $agent->runForUser($user, 'Check the configured limit.');
     }
 
     public function test_agent_corrects_schema_invalid_output_once(): void
@@ -347,5 +389,30 @@ class AgentFrameworkTest extends TestCase
         }
 
         $this->assertSame(2, $provider->calls);
+    }
+
+    private function userWithTrustLevel(string $agentName, int $trustLevel): User
+    {
+        $user = User::factory()->create();
+        AgentTrust::query()->create([
+            'user_id' => $user->id,
+            'agent_name' => $agentName,
+            'trust_level' => $trustLevel,
+        ]);
+
+        return $user;
+    }
+
+    private function resolverFor(LlmProvider $provider): UserLlmProviderResolver
+    {
+        $resolver = \Mockery::mock(UserLlmProviderResolver::class);
+        $resolver->shouldReceive('resolve')->andReturn([
+            'provider' => $provider,
+            'model' => 'test-model',
+            'routing' => [],
+            'fallbacks' => [],
+        ]);
+
+        return $resolver;
     }
 }

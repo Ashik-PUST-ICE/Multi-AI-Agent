@@ -10,7 +10,9 @@ use App\Models\AgentRun;
 use App\Models\User;
 use App\Services\AgentActivityLogger;
 use App\Services\TaskTokenBudgetService;
+use App\Services\TrustLevelService;
 use App\Tools\ToolRegistry;
+use App\Tools\ToolTrustLevelException;
 use Illuminate\Http\Client\ConnectionException;
 use InvalidArgumentException;
 use RuntimeException;
@@ -88,6 +90,7 @@ abstract class BaseAgent
             $this->approvedCallSignatures($agentRun),
             $resolvedProvider['routing'],
             $resolvedProvider['fallbacks'],
+            $user,
         );
     }
 
@@ -104,6 +107,7 @@ abstract class BaseAgent
         array $approvedCallSignatures = [],
         array $routing = [],
         array $fallbacks = [],
+        ?User $user = null,
     ): array {
         $normalizedInput = $this->normalizeInput($input);
         $agentRegistry = $this->agentRegistry ?? app(AgentRegistry::class);
@@ -224,6 +228,7 @@ abstract class BaseAgent
                 $approvedCallSignatures,
                 $agentRun,
                 $toolCallCount,
+                $user,
             );
         }
 
@@ -446,6 +451,7 @@ abstract class BaseAgent
         array $approvedCallSignatures,
         ?AgentRun $agentRun,
         int &$toolCallCount,
+        ?User $user,
     ): array {
         $assistantMessage = [
             'role' => 'assistant',
@@ -468,12 +474,32 @@ abstract class BaseAgent
             $rawArguments = $toolCall['arguments'] ?? [];
             $arguments = $this->normalizeArguments($rawArguments);
             $this->recordToolCall($agentRun, $toolName, $arguments, $toolCall['id'] ?? '');
-            $toolResult = $this->tools->run(
-                $toolName,
-                $arguments,
-                $this->mode,
-                $approvedCallSignatures,
-            );
+            $trustLevel = $user === null
+                ? AGENT_TRUST_LEVEL_NONE
+                : app(TrustLevelService::class)->currentLevel($user, $this->name());
+
+            try {
+                $toolResult = $this->tools->run(
+                    $toolName,
+                    $arguments,
+                    $this->mode,
+                    $approvedCallSignatures,
+                    $trustLevel,
+                );
+            } catch (ToolTrustLevelException $exception) {
+                if ($user !== null) {
+                    app(TrustLevelService::class)->recordViolation(
+                        $user,
+                        $this->name(),
+                        $exception->toolName,
+                        $exception->requiredLevel,
+                        $exception->currentLevel,
+                        $agentRun,
+                    );
+                }
+
+                throw $exception;
+            }
             $toolCallId = $toolCall['id'] ?? '';
             $encodedResult = json_encode($toolResult, JSON_THROW_ON_ERROR);
             $this->activityLogger?->recordMessage(

@@ -21,6 +21,11 @@ class WebSearchTool implements ToolInterface
         return true;
     }
 
+    public function minimumTrustLevel(): int
+    {
+        return AGENT_TRUST_LEVEL_READ;
+    }
+
     public function inputSchema(): array
     {
         return [

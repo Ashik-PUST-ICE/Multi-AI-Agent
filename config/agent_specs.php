@@ -1,6 +1,12 @@
 <?php
 
 return [
+    'trust_defaults' => [
+        'Orchestrator' => AGENT_TRUST_LEVEL_NONE,
+        'Research' => AGENT_TRUST_LEVEL_READ,
+        'Writer' => AGENT_TRUST_LEVEL_NONE,
+        'Reviewer' => AGENT_TRUST_LEVEL_NONE,
+    ],
     'agents' => [
         'Orchestrator' => [
             'role' => 'Creates a concise and safe plan for the requested task.',

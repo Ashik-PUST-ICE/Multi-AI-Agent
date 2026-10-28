@@ -29,6 +29,7 @@ const elements = {
     accountControls: document.querySelector('#account-controls'),
     accountName: document.querySelector('#account-name'),
     agentDirectory: document.querySelector('#agent-directory'),
+    agentTrustList: document.querySelector('#agent-trust-list'),
     agentBrainGrid: document.querySelector('#agent-brain-grid'),
     brainSettingsForm: document.querySelector('#brain-settings-form'),
     defaultProvider: document.querySelector('#default-provider'),
@@ -227,6 +228,10 @@ function switchView(viewName) {
 
     if ((selectedView === 'brain' || selectedView === 'agents') && apiToken) {
         loadBrainSettings().catch((error) => showNotice(elements.error, error.message));
+    }
+
+    if (selectedView === 'agents' && apiToken) {
+        loadAgentTrust().catch((error) => showNotice(elements.error, error.message));
     }
 }
 
@@ -617,6 +622,66 @@ function renderAgentDirectory() {
     }).join('');
 }
 
+async function loadAgentTrust() {
+    const responseData = await apiRequest('/trust');
+    const agents = responseData.agents || [];
+    const historyByAgent = new Map();
+    (responseData.history || []).forEach((historyEntry) => {
+        const entries = historyByAgent.get(historyEntry.agent_name) || [];
+        entries.push(historyEntry);
+        historyByAgent.set(historyEntry.agent_name, entries);
+    });
+
+    elements.agentTrustList.innerHTML = `
+        <div class="agent-trust-grid">
+            ${agents.map((agent) => {
+                const agentHistory = historyByAgent.get(agent.agent_name) || [];
+                const levelOptions = Object.entries(agent.levels).map(([level, description]) => `
+                    <option value="${escapeHtml(level)}" ${Number(level) === Number(agent.trust_level) ? 'selected' : ''}>
+                        ${escapeHtml(level)} · ${escapeHtml(description)}
+                    </option>
+                `).join('');
+                const historyMarkup = agentHistory.length > 0
+                    ? agentHistory.map((entry) => `
+                        <div class="trust-history-entry">
+                            ${escapeHtml(entry.from_level)} → ${escapeHtml(entry.to_level)}
+                            · ${escapeHtml({
+                                automatic: 'স্বয়ংক্রিয়ভাবে কমানো',
+                                violation: 'সর্বনিম্ন level-এ tool প্রত্যাখ্যাত',
+                                user: 'ব্যবহারকারীর পরিবর্তন',
+                            }[entry.change_type] || 'Trust পরিবর্তন')}
+                            · ${escapeHtml(entry.reason)}
+                            · ${escapeHtml(formatDate(entry.changed_at))}
+                        </div>
+                    `).join('')
+                    : '<p>এখনো Trust পরিবর্তনের ইতিহাস নেই।</p>';
+
+                return `
+                    <article class="agent-trust-card">
+                        <h4>${escapeHtml(agent.agent_name)}</h4>
+                        <p>বর্তমান level ${escapeHtml(agent.trust_level)}। প্রয়োজনের বেশি permission দেবেন না।</p>
+                        <form class="agent-trust-form" data-trust-agent="${escapeHtml(agent.agent_name)}">
+                            <label>
+                                Trust Level
+                                <select name="trust_level">${levelOptions}</select>
+                            </label>
+                            <label>
+                                পরিবর্তনের কারণ
+                                <input name="reason" type="text" maxlength="500" required placeholder="কারণ লিখুন">
+                            </label>
+                            <button class="button button-quiet button-small" type="submit">Trust Level সংরক্ষণ</button>
+                        </form>
+                        <div class="trust-history">
+                            <h4>পরিবর্তনের ইতিহাস</h4>
+                            <div class="trust-history-list">${historyMarkup}</div>
+                        </div>
+                    </article>
+                `;
+            }).join('')}
+        </div>
+    `;
+}
+
 async function loadBrainSettings() {
     if (!apiToken) {
         return;
@@ -851,6 +916,35 @@ elements.providerKeyList.addEventListener('click', async (event) => {
 elements.agentDirectory.addEventListener('click', (event) => {
     if (event.target.closest('[data-open-brain]')) {
         switchView('brain');
+    }
+});
+
+elements.agentTrustList.addEventListener('submit', async (event) => {
+    const form = event.target.closest('[data-trust-agent]');
+    if (!form) {
+        return;
+    }
+
+    event.preventDefault();
+    const formData = new FormData(form);
+    const agentName = form.dataset.trustAgent;
+    const submitButton = form.querySelector('button[type="submit"]');
+    submitButton.disabled = true;
+
+    try {
+        await apiRequest(`/trust/${encodeURIComponent(agentName)}`, {
+            method: 'PUT',
+            body: JSON.stringify({
+                trust_level: Number(formData.get('trust_level')),
+                reason: String(formData.get('reason') || '').trim(),
+            }),
+        });
+        await loadAgentTrust();
+        showNotice(elements.success, `${agentName} এর Trust Level আপডেট হয়েছে।`);
+    } catch (error) {
+        showNotice(elements.error, error.message);
+    } finally {
+        submitButton.disabled = false;
     }
 });
 

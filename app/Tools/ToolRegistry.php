@@ -31,6 +31,11 @@ class ToolRegistry
             throw new InvalidArgumentException("Tool [{$name}] must define an object input schema.");
         }
 
+        if ($tool->minimumTrustLevel() < AGENT_TRUST_LEVEL_READ
+            || $tool->minimumTrustLevel() > AGENT_TRUST_LEVEL_SENSITIVE) {
+            throw new InvalidArgumentException("Tool [{$name}] must require a trust level between 1 and 4.");
+        }
+
         $isDuplicate = isset($this->tools[$name]);
 
         if ($isDuplicate) {
@@ -81,21 +86,33 @@ class ToolRegistry
         array $input,
         string $mode = TASK_MODE_SANDBOX,
         array $approvedCallSignatures = [],
+        int $trustLevel = 0,
     ): array {
         $tool = $this->get($name);
+
+        if (! in_array($mode, [TASK_MODE_SANDBOX, TASK_MODE_LIVE], true)) {
+            throw new InvalidArgumentException("Unsupported execution mode [{$mode}].");
+        }
+
+        if ($trustLevel < AGENT_TRUST_LEVEL_NONE || $trustLevel > AGENT_TRUST_LEVEL_SENSITIVE) {
+            throw new InvalidArgumentException('Trust level must be between 0 and 4.');
+        }
+
+        if ($trustLevel < $tool->minimumTrustLevel()) {
+            throw new ToolTrustLevelException($name, $tool->minimumTrustLevel(), $trustLevel);
+        }
 
         if ($mode === TASK_MODE_SANDBOX) {
             return $tool->simulate($input);
         }
 
-        if ($mode !== TASK_MODE_LIVE) {
-            throw new InvalidArgumentException("Unsupported execution mode [{$mode}].");
-        }
-
         $approvalSignature = $this->approvalSignature($name, $input);
         $isApproved = in_array($approvalSignature, $approvedCallSignatures, true);
 
-        if ($tool->requiresApproval() && ! $isApproved) {
+        $requiresApproval = $tool->requiresApproval()
+            || $tool->minimumTrustLevel() >= AGENT_TRUST_LEVEL_WRITE;
+
+        if ($requiresApproval && ! $isApproved) {
             throw new ToolApprovalRequiredException($name, $input, $approvalSignature);
         }
 

@@ -17,6 +17,10 @@ class AuthenticationService
 {
     use ResponseTrait;
 
+    public function __construct(
+        private readonly TrustLevelService $trustLevelService,
+    ) {}
+
     /**
      * @param  array{name: string, email: string, password: string}  $data
      */
@@ -44,6 +48,7 @@ class AuthenticationService
                 ],
             );
             $user->assignRole($userRole);
+            $this->trustLevelService->initializeDefaults($user);
 
             return [
                 'token' => $user->createToken('multi-ai-agent-web')->plainTextToken,

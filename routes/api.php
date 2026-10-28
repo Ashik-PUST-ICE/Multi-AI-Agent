@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\AgentSpecController;
+use App\Http\Controllers\Api\AgentTrustController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\ProviderSettingsController;
 use App\Http\Controllers\Api\TaskController;
@@ -38,6 +39,10 @@ Route::prefix('/v1/auth')->name('api.v1.auth.')->group(function (): void {
 Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
     Route::post('/v1/auth/logout', [AuthController::class, 'logout'])
         ->name('api.v1.auth.logout');
+    Route::get('/v1/trust', [AgentTrustController::class, 'index'])->name('api.v1.trust.index');
+    Route::put('/v1/trust/{agentName}', [AgentTrustController::class, 'update'])
+        ->where('agentName', '[A-Za-z0-9_-]+')
+        ->name('api.v1.trust.update');
 
     Route::get('/v1/user', function (Request $request) {
         return response()->json([

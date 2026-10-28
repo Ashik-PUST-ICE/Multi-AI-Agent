@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Api;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class CreateAgentSpecVersionRequest extends FormRequest
 {
@@ -26,7 +27,11 @@ class CreateAgentSpecVersionRequest extends FormRequest
             'output_schema' => ['sometimes', 'array'],
             'allowed_tools' => ['sometimes', 'array'],
             'allowed_tools.*' => ['string', 'distinct'],
-            'minimum_trust_level' => ['sometimes', 'integer', 'between:0,5'],
+            'minimum_trust_level' => [
+                'sometimes',
+                'integer',
+                Rule::in(range(AGENT_TRUST_LEVEL_NONE, AGENT_TRUST_LEVEL_SENSITIVE)),
+            ],
             'default_model' => ['sometimes', 'nullable', 'string', 'max:255'],
             'fallback_model' => ['sometimes', 'nullable', 'string', 'max:255'],
             'max_steps' => ['sometimes', 'integer', 'between:1,20'],

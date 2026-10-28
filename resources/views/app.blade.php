@@ -172,6 +172,17 @@
                     <div class="agent-directory" id="agent-directory">
                         <div class="panel empty-state">এজেন্ট সেটিংস দেখতে Brain পেজ খুলুন।</div>
                     </div>
+                    <section class="panel trust-section" aria-labelledby="trust-heading">
+                        <div class="brain-section-heading">
+                            <div>
+                                <h3 id="trust-heading">এজেন্ট Trust Level</h3>
+                                <p>Orchestrator, Writer ও Reviewer level 0-তে, Research read-only access-এর জন্য level 1-এ শুরু করে। কোনো agent নিজে Trust বাড়াতে পারে না।</p>
+                            </div>
+                        </div>
+                        <div class="agent-trust-list" id="agent-trust-list" aria-live="polite">
+                            <div class="empty-state">Trust settings লোড হচ্ছে।</div>
+                        </div>
+                    </section>
                 </section>
 
                 <section class="view-panel" id="brain-view" aria-labelledby="brain-heading">

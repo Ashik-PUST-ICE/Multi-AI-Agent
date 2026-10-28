@@ -10,6 +10,8 @@ interface ToolInterface
 
     public function requiresApproval(): bool;
 
+    public function minimumTrustLevel(): int;
+
     /**
      * @return array<string, mixed>
      */

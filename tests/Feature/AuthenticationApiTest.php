@@ -35,6 +35,12 @@ class AuthenticationApiTest extends TestCase
         $this->assertNotNull($user->tenant_id);
         $this->assertSame("{$user->name}'s Workspace", $user->tenant->name);
         $this->assertDatabaseCount('tenants', 1);
+        $this->assertDatabaseCount('agent_trust', 4);
+        $this->assertDatabaseHas('agent_trust', [
+            'user_id' => $user->id,
+            'agent_name' => 'Research',
+            'trust_level' => AGENT_TRUST_LEVEL_READ,
+        ]);
         $this->assertTrue($user->hasRole('user'));
         $this->assertFalse($user->hasRole('admin'));
 
