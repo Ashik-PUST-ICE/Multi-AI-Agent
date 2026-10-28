@@ -9,6 +9,11 @@ interface ToolInterface
     public function description(): string;
 
     /**
+     * @return array<string, mixed>
+     */
+    public function inputSchema(): array;
+
+    /**
      * @param  array<string, mixed>  $input
      * @return array<string, mixed>
      */

@@ -14,9 +14,20 @@ class ToolRegistry
     public function register(ToolInterface $tool): void
     {
         $name = trim($tool->name());
+        $description = trim($tool->description());
 
         if ($name === '') {
             throw new InvalidArgumentException('Tool names cannot be empty.');
+        }
+
+        if ($description === '') {
+            throw new InvalidArgumentException("Tool [{$name}] must have a description.");
+        }
+
+        $inputSchema = $tool->inputSchema();
+
+        if (($inputSchema['type'] ?? null) !== 'object') {
+            throw new InvalidArgumentException("Tool [{$name}] must define an object input schema.");
         }
 
         $isDuplicate = isset($this->tools[$name]);
@@ -76,16 +87,18 @@ class ToolRegistry
     }
 
     /**
-     * @return array{name: string, description: string}
+     * @return array{name: string, description: string, input_schema: array<string, mixed>}
      */
     private function definitionFor(ToolInterface $tool): array
     {
         $name = trim($tool->name());
         $description = $tool->description();
+        $inputSchema = $tool->inputSchema();
 
         return [
             'name' => $name,
             'description' => $description,
+            'input_schema' => $inputSchema,
         ];
     }
 }

@@ -4,6 +4,8 @@ namespace App\Agents;
 
 use App\Llm\ChatResponse;
 use App\Llm\LlmProvider;
+use App\Llm\UserLlmProviderResolver;
+use App\Models\User;
 use App\Tools\ToolRegistry;
 use InvalidArgumentException;
 use RuntimeException;
@@ -16,6 +18,7 @@ abstract class BaseAgent
         private readonly LlmProvider $provider,
         private readonly ToolRegistry $tools,
         private readonly string $mode = TASK_MODE_SANDBOX,
+        private readonly ?UserLlmProviderResolver $userProviderResolver = null,
     ) {}
 
     abstract public function name(): string;
@@ -36,13 +39,48 @@ abstract class BaseAgent
      */
     public function run(string $input, array $context = []): array
     {
+        return $this->runWithProvider($this->provider, $input, $context);
+    }
+
+    /**
+     * Execute using the model explicitly selected for this user and agent.
+     *
+     * @param  array<string, mixed>  $context
+     * @return array<string, mixed>
+     */
+    public function runForUser(User $user, string $input, array $context = []): array
+    {
+        if ($this->userProviderResolver === null) {
+            throw new RuntimeException('User-specific provider resolution is not configured.');
+        }
+
+        $resolvedProvider = $this->userProviderResolver->resolve($user, $this->name());
+
+        return $this->runWithProvider(
+            $resolvedProvider['provider'],
+            $input,
+            $context,
+            $resolvedProvider['model'],
+        );
+    }
+
+    /**
+     * @param  array<string, mixed>  $context
+     * @return array<string, mixed>
+     */
+    private function runWithProvider(
+        LlmProvider $provider,
+        string $input,
+        array $context = [],
+        ?string $model = null,
+    ): array {
         $normalizedInput = $this->normalizeInput($input);
         $allowedTools = $this->allowedTools();
         $messages = $this->initialMessages($normalizedInput, $context);
         $usage = [];
 
         for ($iteration = 0; $iteration <= self::MAX_TOOL_ITERATIONS; $iteration++) {
-            $response = $this->requestResponse($messages, $allowedTools);
+            $response = $this->requestResponse($provider, $messages, $allowedTools, $model);
             $usage = $this->combineUsage($usage, $response->usage);
 
             if ($response->toolCalls === []) {
@@ -102,11 +140,16 @@ abstract class BaseAgent
      * @param  array<int, array<string, mixed>>  $messages
      * @param  list<string>  $allowedTools
      */
-    private function requestResponse(array $messages, array $allowedTools): ChatResponse
-    {
+    private function requestResponse(
+        LlmProvider $provider,
+        array $messages,
+        array $allowedTools,
+        ?string $model,
+    ): ChatResponse {
         $toolDefinitions = $this->tools->definitions($allowedTools);
+        $options = $model === null ? [] : ['model' => $model];
 
-        return $this->provider->chat($messages, $toolDefinitions);
+        return $provider->chat($messages, $toolDefinitions, $options);
     }
 
     /**

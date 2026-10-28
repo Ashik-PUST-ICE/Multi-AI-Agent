@@ -16,6 +16,21 @@ class WebSearchTool implements ToolInterface
         return 'Search the web for information relevant to a query.';
     }
 
+    public function inputSchema(): array
+    {
+        return [
+            'type' => 'object',
+            'properties' => [
+                'query' => [
+                    'type' => 'string',
+                    'description' => 'The search query.',
+                ],
+            ],
+            'required' => ['query'],
+            'additionalProperties' => false,
+        ];
+    }
+
     public function execute(array $input): array
     {
         throw new LogicException('Live web search is disabled until the security phase configures a validated search adapter.');
@@ -23,7 +38,13 @@ class WebSearchTool implements ToolInterface
 
     public function simulate(array $input): array
     {
-        $query = trim((string) ($input['query'] ?? ''));
+        $rawQuery = $input['query'] ?? null;
+
+        if (! is_string($rawQuery)) {
+            throw new \InvalidArgumentException('A string search query is required.');
+        }
+
+        $query = trim($rawQuery);
 
         if ($query === '') {
             throw new \InvalidArgumentException('A non-empty search query is required.');
