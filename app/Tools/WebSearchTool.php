@@ -16,6 +16,11 @@ class WebSearchTool implements ToolInterface
         return 'Search the web for information relevant to a query.';
     }
 
+    public function requiresApproval(): bool
+    {
+        return true;
+    }
+
     public function inputSchema(): array
     {
         return [

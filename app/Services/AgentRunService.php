@@ -4,6 +4,10 @@ namespace App\Services;
 
 use App\Agents\AgentFactory;
 use App\Models\AgentRun;
+use App\Models\PendingApproval;
+use App\Models\Task;
+use App\Models\User;
+use App\Tools\ToolApprovalRequiredException;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
 use Throwable;
@@ -13,6 +17,7 @@ class AgentRunService
     public function __construct(
         private readonly AgentFactory $agentFactory,
         private readonly OrchestratorService $orchestratorService,
+        private readonly AgentActivityLogger $activityLogger,
     ) {}
 
     public function run(int $agentRunId): void
@@ -44,7 +49,13 @@ class AgentRunService
         }
 
         $agent = $this->agentFactory->make($agentRun->agent_name, $task->mode);
-        $output = $agent->runForUser($user, $prompt, $context);
+        try {
+            $output = $agent->runForUser($user, $prompt, $context, $agentRun);
+        } catch (ToolApprovalRequiredException $exception) {
+            $this->requestToolApproval($agentRun, $task, $user, $exception);
+
+            return;
+        }
 
         $this->orchestratorService->completeAgentRun($agentRun->id, $output);
     }
@@ -73,6 +84,55 @@ class AgentRunService
                     'completed_at' => now(),
                 ]);
             }
+
+            $this->activityLogger->recordEvent($agentRun, 'agent.failed', [
+                'error' => $exception->getMessage(),
+            ]);
+        });
+    }
+
+    private function requestToolApproval(
+        AgentRun $agentRun,
+        Task $task,
+        User $user,
+        ToolApprovalRequiredException $exception,
+    ): void {
+        DB::transaction(function () use ($agentRun, $task, $user, $exception): void {
+            $existingApproval = $agentRun->pendingApprovals()
+                ->where('status', APPROVAL_STATUS_PENDING)
+                ->get()
+                ->first(static fn (PendingApproval $approval): bool => (
+                    ($approval->payload['approval_signature'] ?? null) === $exception->approvalSignature
+                ));
+
+            if ($existingApproval === null) {
+                $agentRun->pendingApprovals()->create([
+                    'task_id' => $task->id,
+                    'action' => "tool:{$exception->toolName}",
+                    'requested_by' => $user->id,
+                    'payload' => [
+                        'tool_name' => $exception->toolName,
+                        'tool_input' => $this->activityLogger->redactValue($exception->input),
+                        'approval_signature' => $exception->approvalSignature,
+                    ],
+                    'status' => APPROVAL_STATUS_PENDING,
+                    'expires_at' => now()->addMinutes((int) config('llm.approval_expiry', 15)),
+                ]);
+            }
+
+            $agentRun->update([
+                'status' => AGENT_RUN_STATUS_PENDING,
+                'error_message' => null,
+            ]);
+            $task->update([
+                'status' => TASK_STATUS_PENDING,
+                'error_message' => null,
+            ]);
+
+            $this->activityLogger->recordEvent($agentRun, 'tool.approval_requested', [
+                'tool_name' => $exception->toolName,
+                'approval_signature' => $exception->approvalSignature,
+            ]);
         });
     }
 

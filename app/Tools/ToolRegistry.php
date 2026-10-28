@@ -3,6 +3,7 @@
 namespace App\Tools;
 
 use InvalidArgumentException;
+use JsonException;
 
 class ToolRegistry
 {
@@ -71,19 +72,66 @@ class ToolRegistry
     /**
      * Sandbox mode always calls simulate(), even when execute() is available.
      *
+     * @param  list<string>  $approvedCallSignatures
      * @param  array<string, mixed>  $input
      * @return array<string, mixed>
      */
-    public function run(string $name, array $input, string $mode = TASK_MODE_SANDBOX): array
-    {
+    public function run(
+        string $name,
+        array $input,
+        string $mode = TASK_MODE_SANDBOX,
+        array $approvedCallSignatures = [],
+    ): array {
         $tool = $this->get($name);
-        $result = match ($mode) {
-            TASK_MODE_SANDBOX => $tool->simulate($input),
-            TASK_MODE_LIVE => $tool->execute($input),
-            default => throw new InvalidArgumentException("Unsupported execution mode [{$mode}]."),
-        };
 
-        return $result;
+        if ($mode === TASK_MODE_SANDBOX) {
+            return $tool->simulate($input);
+        }
+
+        if ($mode !== TASK_MODE_LIVE) {
+            throw new InvalidArgumentException("Unsupported execution mode [{$mode}].");
+        }
+
+        $approvalSignature = $this->approvalSignature($name, $input);
+        $isApproved = in_array($approvalSignature, $approvedCallSignatures, true);
+
+        if ($tool->requiresApproval() && ! $isApproved) {
+            throw new ToolApprovalRequiredException($name, $input, $approvalSignature);
+        }
+
+        return $tool->execute($input);
+    }
+
+    /**
+     * @param  array<string, mixed>  $input
+     */
+    public function approvalSignature(string $name, array $input): string
+    {
+        return hash('sha256', json_encode(
+            [$name, $this->sortKeysRecursively($input)],
+            JSON_THROW_ON_ERROR,
+        ));
+    }
+
+    /**
+     * @param  array<string, mixed>  $input
+     * @return array<string, mixed>
+     *
+     * @throws JsonException
+     */
+    private function sortKeysRecursively(array $input): array
+    {
+        foreach ($input as $key => $value) {
+            if (is_array($value) && ! array_is_list($value)) {
+                $input[$key] = $this->sortKeysRecursively($value);
+            }
+        }
+
+        if (! array_is_list($input)) {
+            ksort($input);
+        }
+
+        return $input;
     }
 
     /**

@@ -8,6 +8,8 @@ interface ToolInterface
 
     public function description(): string;
 
+    public function requiresApproval(): bool;
+
     /**
      * @return array<string, mixed>
      */

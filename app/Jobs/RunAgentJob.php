@@ -19,6 +19,10 @@ class RunAgentJob implements ShouldQueue
 
     public int $tries = 3;
 
+    public int $timeout;
+
+    public bool $failOnTimeout = true;
+
     /**
      * @var array<int, int>
      */
@@ -26,7 +30,9 @@ class RunAgentJob implements ShouldQueue
 
     public function __construct(
         public readonly int $agentRunId,
-    ) {}
+    ) {
+        $this->timeout = (int) config('llm.agent_timeout', 60);
+    }
 
     public function handle(AgentRunService $agentRunService): void
     {

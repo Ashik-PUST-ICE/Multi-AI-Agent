@@ -5,7 +5,9 @@ namespace App\Agents;
 use App\Llm\ChatResponse;
 use App\Llm\LlmProvider;
 use App\Llm\UserLlmProviderResolver;
+use App\Models\AgentRun;
 use App\Models\User;
+use App\Services\AgentActivityLogger;
 use App\Tools\ToolRegistry;
 use InvalidArgumentException;
 use RuntimeException;
@@ -19,6 +21,7 @@ abstract class BaseAgent
         private readonly ToolRegistry $tools,
         private readonly string $mode = TASK_MODE_SANDBOX,
         private readonly ?UserLlmProviderResolver $userProviderResolver = null,
+        private readonly ?AgentActivityLogger $activityLogger = null,
     ) {}
 
     abstract public function name(): string;
@@ -52,8 +55,12 @@ abstract class BaseAgent
      * @param  array<string, mixed>  $context
      * @return array<string, mixed>
      */
-    public function runForUser(User $user, string $input, array $context = []): array
-    {
+    public function runForUser(
+        User $user,
+        string $input,
+        array $context = [],
+        ?AgentRun $agentRun = null,
+    ): array {
         if ($this->userProviderResolver === null) {
             throw new RuntimeException('User-specific provider resolution is not configured.');
         }
@@ -65,6 +72,8 @@ abstract class BaseAgent
             $input,
             $context,
             $resolvedProvider['model'],
+            $agentRun,
+            $this->approvedCallSignatures($agentRun),
         );
     }
 
@@ -77,25 +86,48 @@ abstract class BaseAgent
         string $input,
         array $context = [],
         ?string $model = null,
+        ?AgentRun $agentRun = null,
+        array $approvedCallSignatures = [],
     ): array {
         $normalizedInput = $this->normalizeInput($input);
         $allowedTools = $this->allowedTools();
         $messages = $this->initialMessages($normalizedInput, $context);
         $usage = [];
+        $toolCallCount = 0;
+        $this->recordInitialMessages($agentRun, $messages);
+        $this->activityLogger?->recordEvent($agentRun, 'agent.started', [
+            'agent' => $this->name(),
+            'model' => $model,
+            'mode' => $this->mode,
+        ]);
 
         for ($iteration = 0; $iteration <= self::MAX_TOOL_ITERATIONS; $iteration++) {
             $response = $this->requestResponse($provider, $messages, $allowedTools, $model);
             $usage = $this->combineUsage($usage, $response->usage);
+            $this->recordAssistantResponse($agentRun, $response, $iteration);
 
             if ($response->toolCalls === []) {
-                return $this->formatResponse($response, $usage);
+                $result = $this->formatResponse($response, $usage);
+                $this->activityLogger?->recordEvent($agentRun, 'agent.completed', [
+                    'agent' => $this->name(),
+                    'usage' => $usage,
+                ]);
+
+                return $result;
             }
 
             if ($iteration === self::MAX_TOOL_ITERATIONS) {
                 throw new RuntimeException('Agent exceeded the maximum tool-use iterations.');
             }
 
-            $messages = $this->appendToolResponses($messages, $response, $allowedTools);
+            $messages = $this->appendToolResponses(
+                $messages,
+                $response,
+                $allowedTools,
+                $approvedCallSignatures,
+                $agentRun,
+                $toolCallCount,
+            );
         }
 
         throw new RuntimeException('Agent stopped without producing a final response.');
@@ -161,8 +193,14 @@ abstract class BaseAgent
      * @param  list<string>  $allowedTools
      * @return array<int, array<string, mixed>>
      */
-    private function appendToolResponses(array $messages, ChatResponse $response, array $allowedTools): array
-    {
+    private function appendToolResponses(
+        array $messages,
+        ChatResponse $response,
+        array $allowedTools,
+        array $approvedCallSignatures,
+        ?AgentRun $agentRun,
+        int &$toolCallCount,
+    ): array {
         $assistantMessage = [
             'role' => 'assistant',
             'tool_calls' => $response->toolCalls,
@@ -171,14 +209,33 @@ abstract class BaseAgent
         $messages[] = $assistantMessage;
 
         foreach ($response->toolCalls as $toolCall) {
+            $toolCallCount++;
+            $maximumToolCalls = (int) config('llm.max_tool_calls', 10);
+
+            if ($toolCallCount > $maximumToolCalls) {
+                throw new RuntimeException('Agent exceeded the maximum number of tool calls.');
+            }
+
             $toolName = $toolCall['name'] ?? '';
             $this->validateAllowedTool($toolName, $allowedTools);
 
             $rawArguments = $toolCall['arguments'] ?? [];
             $arguments = $this->normalizeArguments($rawArguments);
-            $toolResult = $this->tools->run($toolName, $arguments, $this->mode);
+            $this->recordToolCall($agentRun, $toolName, $arguments, $toolCall['id'] ?? '');
+            $toolResult = $this->tools->run(
+                $toolName,
+                $arguments,
+                $this->mode,
+                $approvedCallSignatures,
+            );
             $toolCallId = $toolCall['id'] ?? '';
             $encodedResult = json_encode($toolResult, JSON_THROW_ON_ERROR);
+            $this->activityLogger?->recordMessage(
+                $agentRun,
+                'tool',
+                $encodedResult,
+                ['name' => $toolName, 'tool_call_id' => $toolCallId],
+            );
             $toolMessage = [
                 'role' => 'tool',
                 'tool_call_id' => $toolCallId,
@@ -189,6 +246,110 @@ abstract class BaseAgent
         }
 
         return $messages;
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $messages
+     */
+    private function recordInitialMessages(?AgentRun $agentRun, array $messages): void
+    {
+        if ($agentRun === null || $this->activityLogger === null) {
+            return;
+        }
+
+        foreach ($messages as $message) {
+            $role = $message['role'] ?? 'unknown';
+            $content = $message['content'] ?? '';
+
+            if (is_string($role) && is_string($content)) {
+                $this->activityLogger?->recordMessage($agentRun, $role, $content);
+            }
+        }
+    }
+
+    private function recordAssistantResponse(
+        ?AgentRun $agentRun,
+        ChatResponse $response,
+        int $iteration,
+    ): void {
+        if ($agentRun === null || $this->activityLogger === null) {
+            return;
+        }
+
+        $assistantMessage = [
+            'text' => $response->text,
+            'tool_calls' => $response->toolCalls,
+        ];
+        $safeAssistantMessage = $this->activityLogger === null
+            ? $assistantMessage
+            : $this->activityLogger->redactValue($assistantMessage);
+
+        $this->activityLogger?->recordMessage(
+            $agentRun,
+            'assistant',
+            json_encode($safeAssistantMessage, JSON_THROW_ON_ERROR),
+            [
+                'iteration' => $iteration,
+                'usage' => $response->usage,
+                'stop_reason' => $response->stopReason,
+            ],
+        );
+    }
+
+    /**
+     * @param  array<string, mixed>  $arguments
+     */
+    private function recordToolCall(
+        ?AgentRun $agentRun,
+        string $toolName,
+        array $arguments,
+        string $toolCallId,
+    ): void {
+        if ($agentRun === null || $this->activityLogger === null) {
+            return;
+        }
+
+        $safeArguments = $this->activityLogger->redactValue($arguments);
+
+        $this->activityLogger?->recordMessage(
+            $agentRun,
+            'tool_call',
+            json_encode($safeArguments, JSON_THROW_ON_ERROR),
+            [
+                'name' => $toolName,
+                'tool_call_id' => $toolCallId,
+            ],
+        );
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function approvedCallSignatures(?AgentRun $agentRun): array
+    {
+        if ($agentRun === null) {
+            return [];
+        }
+
+        $approvals = $agentRun->pendingApprovals()
+            ->where('status', APPROVAL_STATUS_APPROVED)
+            ->where(function ($query): void {
+                $query->whereNull('expires_at')
+                    ->orWhere('expires_at', '>', now());
+            })
+            ->get(['payload']);
+
+        $signatures = [];
+
+        foreach ($approvals as $approval) {
+            $signature = $approval->payload['approval_signature'] ?? null;
+
+            if (is_string($signature)) {
+                $signatures[] = $signature;
+            }
+        }
+
+        return $signatures;
     }
 
     /**

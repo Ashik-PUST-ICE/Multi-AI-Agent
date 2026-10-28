@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\ProviderSettingsController;
 use App\Http\Controllers\Api\TaskController;
+use App\Http\Controllers\Api\ToolApprovalController;
 use App\Llm\ProviderCatalog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
@@ -34,6 +35,13 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/v1/tasks/{task}', [TaskController::class, 'show'])
         ->whereNumber('task')
         ->name('api.v1.tasks.show');
+    Route::get('/v1/approvals', [ToolApprovalController::class, 'index'])->name('api.v1.approvals.index');
+    Route::post('/v1/approvals/{approval}/approve', [ToolApprovalController::class, 'approve'])
+        ->whereNumber('approval')
+        ->name('api.v1.approvals.approve');
+    Route::post('/v1/approvals/{approval}/reject', [ToolApprovalController::class, 'reject'])
+        ->whereNumber('approval')
+        ->name('api.v1.approvals.reject');
 
     Route::prefix('/v1/llm')->name('api.v1.llm.')->group(function () {
         Route::get('/catalog', [ProviderSettingsController::class, 'catalog'])->name('catalog');
