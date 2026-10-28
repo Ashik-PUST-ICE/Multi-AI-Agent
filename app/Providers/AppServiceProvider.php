@@ -2,8 +2,10 @@
 
 namespace App\Providers;
 
-use Illuminate\Support\ServiceProvider;
+use App\Tools\ToolRegistry;
+use App\Tools\WebSearchTool;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -12,7 +14,12 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        //
+        $this->app->bind(ToolRegistry::class, function (): ToolRegistry {
+            $toolRegistry = new ToolRegistry;
+            $toolRegistry->register(new WebSearchTool);
+
+            return $toolRegistry;
+        });
     }
 
     /**

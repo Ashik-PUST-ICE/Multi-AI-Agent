@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\ProviderSettingsController;
+use App\Http\Controllers\Api\TaskController;
 use App\Llm\ProviderCatalog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
@@ -28,6 +29,11 @@ Route::middleware('auth:sanctum')->group(function () {
             'user' => $request->user()->only(['id', 'name', 'email']),
         ]);
     });
+
+    Route::post('/v1/tasks', [TaskController::class, 'store'])->name('api.v1.tasks.store');
+    Route::get('/v1/tasks/{task}', [TaskController::class, 'show'])
+        ->whereNumber('task')
+        ->name('api.v1.tasks.show');
 
     Route::prefix('/v1/llm')->name('api.v1.llm.')->group(function () {
         Route::get('/catalog', [ProviderSettingsController::class, 'catalog'])->name('catalog');

@@ -15,7 +15,7 @@ abstract class BaseAgent
     private const MAX_TOOL_ITERATIONS = 5;
 
     public function __construct(
-        private readonly LlmProvider $provider,
+        private readonly ?LlmProvider $provider,
         private readonly ToolRegistry $tools,
         private readonly string $mode = TASK_MODE_SANDBOX,
         private readonly ?UserLlmProviderResolver $userProviderResolver = null,
@@ -39,6 +39,10 @@ abstract class BaseAgent
      */
     public function run(string $input, array $context = []): array
     {
+        if ($this->provider === null) {
+            throw new RuntimeException('A provider is required to run this agent.');
+        }
+
         return $this->runWithProvider($this->provider, $input, $context);
     }
 
