@@ -13,7 +13,6 @@ Thumbs.db
 .env.backup
 .env.production
 /auth.json
-composer.lock
 
 # PHP / Laravel
 .phpactor.json
@@ -34,11 +33,12 @@ Homestead.yaml
 /.vscode
 /.zed
 /.claude
+/tests
 
 # Node.js
 /node_modules
 package-lock.json
-
+composer.lock
 # Laravel public assets
 /public/build
 /public/hot

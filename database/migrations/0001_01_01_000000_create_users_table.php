@@ -13,11 +13,30 @@ return new class extends Migration
     {
         Schema::create('users', function (Blueprint $table) {
             $table->id();
+            $table->uuid('uuid')->unique();
             $table->string('name');
+            $table->string('nick_name')->nullable();
             $table->string('email')->unique();
+            $table->string('mobile')->nullable()->unique();
+            $table->string('country')->nullable();
             $table->timestamp('email_verified_at')->nullable();
             $table->string('password');
+            $table->string('image')->nullable();
+            $table->unsignedTinyInteger('email_verification_status')->default(STATUS_PENDING);
+            $table->unsignedTinyInteger('phone_verification_status')->default(STATUS_PENDING);
+            $table->unsignedTinyInteger('google_auth_status')->default(STATUS_PENDING);
+            $table->text('google2fa_secret')->nullable();
+            $table->string('google_id')->nullable();
+            $table->string('facebook_id')->nullable();
+            $table->string('verify_token_hash')->nullable();
+            $table->string('otp_hash')->nullable();
+            $table->dateTime('otp_expiry')->nullable();
+            $table->foreignId('created_by')->nullable()->constrained('users')->nullOnDelete();
+            $table->unsignedBigInteger('tenant_id')->nullable()->index();
+            $table->unsignedTinyInteger('status')->default(USER_STATUS_ACTIVE);
+            $table->dateTime('last_seen')->nullable();
             $table->rememberToken();
+            $table->softDeletes();
             $table->timestamps();
         });
 
