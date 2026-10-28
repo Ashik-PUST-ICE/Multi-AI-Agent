@@ -14,4 +14,12 @@ class Role extends SpatieRole
         'status',
         'user_type',
     ];
+
+    protected function casts(): array
+    {
+        return [
+            'status' => 'integer',
+            'user_type' => 'integer',
+        ];
+    }
 }

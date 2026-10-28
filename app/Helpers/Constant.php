@@ -26,19 +26,35 @@ const USER_ROLE_ADMIN = 2;
 const USER_ROLE_USER = 3;
 const USER_ROLE_STAFF = 4;
 
+// Task and agent execution states
+const TASK_STATUS_PENDING = 0;
+const TASK_STATUS_RUNNING = 1;
+const TASK_STATUS_COMPLETED = 2;
+const TASK_STATUS_FAILED = 3;
+const TASK_MODE_SANDBOX = 'sandbox';
+const TASK_MODE_LIVE = 'live';
+
+const AGENT_RUN_STATUS_PENDING = 0;
+const AGENT_RUN_STATUS_RUNNING = 1;
+const AGENT_RUN_STATUS_COMPLETED = 2;
+const AGENT_RUN_STATUS_FAILED = 3;
+
+const APPROVAL_STATUS_PENDING = 0;
+const APPROVAL_STATUS_APPROVED = 1;
+const APPROVAL_STATUS_REJECTED = 2;
 
 // Message
-const SOMETHING_WENT_WRONG = "Something went wrong! Please try again";
-const CREATED_SUCCESSFULLY = "Created Successfully";
-const UPDATED_SUCCESSFULLY = "Updated Successfully";
-const DELETED_SUCCESSFULLY = "Deleted Successfully";
-const UPLOADED_SUCCESSFULLY = "Uploaded Successfully";
-const DATA_FETCH_SUCCESSFULLY = "Data Fetch Successfully";
-const SENT_SUCCESSFULLY = "Sent Successfully";
+const SOMETHING_WENT_WRONG = 'Something went wrong! Please try again';
+const CREATED_SUCCESSFULLY = 'Created Successfully';
+const UPDATED_SUCCESSFULLY = 'Updated Successfully';
+const DELETED_SUCCESSFULLY = 'Deleted Successfully';
+const UPLOADED_SUCCESSFULLY = 'Uploaded Successfully';
+const DATA_FETCH_SUCCESSFULLY = 'Data Fetch Successfully';
+const SENT_SUCCESSFULLY = 'Sent Successfully';
 const DO_NOT_HAVE_PERMISSION = 7;
-const CONFIG_NOT_FOUND = "Configuration not found";
-const VALIDATION_FAILED = "Validation failed";
-const CONFIG_VALIDATED = "Configuration is valid and ready to use";
+const CONFIG_NOT_FOUND = 'Configuration not found';
+const VALIDATION_FAILED = 'Validation failed';
+const CONFIG_VALIDATED = 'Configuration is valid and ready to use';
 
 // Currency placement
 const CURRENCY_SYMBOL_BEFORE = 1;
@@ -56,7 +72,7 @@ const DEACTIVATE = 0;
 const GATEWAY_MODE_LIVE = 1;
 const GATEWAY_MODE_SANDBOX = 2;
 
-//Gateway name
+// Gateway name
 const PAYPAL = 'paypal';
 const STRIPE = 'stripe';
 const RAZORPAY = 'razorpay';
@@ -84,11 +100,10 @@ const AUTHORIZE = 'authorize';
 const XENDIT = 'xendit';
 const PADDLE = 'paddle';
 
-
 const DEFAULT_COLOR = 1;
 const CUSTOM_COLOR = 2;
 
-const LINK_SAAS_ADDON = "";
+const LINK_SAAS_ADDON = '';
 const RECURRING_GATEWAY = ['stripe', 'paypal'];
 
 const SUBSCRIPTION_TYPE_MONTHLY = 1;
@@ -221,5 +236,5 @@ const SOCIAL_MEDIA_PLATFORMS = [
     4 => 'LinkedIn',
     5 => 'Instagram',
     6 => 'TikTok',
-    7 => 'Threads'
+    7 => 'Threads',
 ];

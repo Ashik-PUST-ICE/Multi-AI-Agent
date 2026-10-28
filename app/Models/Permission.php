@@ -12,4 +12,11 @@ class Permission extends SpatiePermission
         'display_name',
         'module',
     ];
+
+    protected function casts(): array
+    {
+        return [
+            'module' => 'integer',
+        ];
+    }
 }

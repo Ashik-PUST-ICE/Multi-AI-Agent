@@ -22,18 +22,18 @@ return new class extends Migration
             $table->timestamp('email_verified_at')->nullable();
             $table->string('password');
             $table->string('image')->nullable();
-            $table->unsignedTinyInteger('email_verification_status')->default(STATUS_PENDING);
-            $table->unsignedTinyInteger('phone_verification_status')->default(STATUS_PENDING);
-            $table->unsignedTinyInteger('google_auth_status')->default(STATUS_PENDING);
+            $table->tinyInteger('email_verification_status')->default(STATUS_PENDING);
+            $table->tinyInteger('phone_verification_status')->default(STATUS_PENDING);
+            $table->tinyInteger('google_auth_status')->default(STATUS_PENDING);
             $table->text('google2fa_secret')->nullable();
             $table->string('google_id')->nullable();
             $table->string('facebook_id')->nullable();
             $table->string('verify_token_hash')->nullable();
             $table->string('otp_hash')->nullable();
             $table->dateTime('otp_expiry')->nullable();
-            $table->foreignId('created_by')->nullable()->constrained('users')->nullOnDelete();
+            $table->unsignedBigInteger('created_by')->nullable()->index();
             $table->unsignedBigInteger('tenant_id')->nullable()->index();
-            $table->unsignedTinyInteger('status')->default(USER_STATUS_ACTIVE);
+            $table->tinyInteger('status')->default(USER_STATUS_ACTIVE);
             $table->dateTime('last_seen')->nullable();
             $table->rememberToken();
             $table->softDeletes();
@@ -48,7 +48,7 @@ return new class extends Migration
 
         Schema::create('sessions', function (Blueprint $table) {
             $table->string('id')->primary();
-            $table->foreignId('user_id')->nullable()->index();
+            $table->unsignedBigInteger('user_id')->nullable()->index();
             $table->string('ip_address', 45)->nullable();
             $table->text('user_agent')->nullable();
             $table->longText('payload');
