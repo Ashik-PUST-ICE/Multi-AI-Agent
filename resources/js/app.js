@@ -184,20 +184,56 @@ function renderTaskDetail(task) {
     const usageSummary = tokenUsage > 0
         ? `<p class="usage-summary">Token usage: ${escapeHtml(tokenUsage.toLocaleString())}</p>`
         : '';
+    const taskMode = task.mode === 'live' ? 'live' : 'sandbox';
+    const modeActions = [
+        `<button class="button button-quiet button-small" type="button" data-replay-task-id="${escapeHtml(task.id)}">Sandbox replay (read only)</button>`,
+    ];
+
+    if (taskMode === 'sandbox' && task.status === 2) {
+        modeActions.unshift(
+            `<button class="button button-small" type="button" data-live-transition-task-id="${escapeHtml(task.id)}">Live mode-এর safety gate যাচাই</button>`,
+        );
+    }
 
     elements.taskDetail.innerHTML = `
         <div class="detail-header">
             <div>
                 <h3>${escapeHtml(task.title)}</h3>
                 <p>শুরু: ${escapeHtml(formatDate(task.started_at || task.created_at))}</p>
+                <span class="mode-badge ${taskMode === 'live' ? 'mode-badge-live' : ''}">${taskMode === 'live' ? 'LIVE' : 'SANDBOX'}</span>
             </div>
             <span class="status-chip status-${escapeHtml(task.status)}">${escapeHtml(statusLabel(task.status))}</span>
         </div>
+        <div class="task-mode-actions">${modeActions.join('')}</div>
         <div class="agent-timeline">${renderAgentRuns(task.agent_runs || [], task.routing)}</div>
         ${usageSummary}
         ${finalResult}
         ${failureMessage}
     `;
+}
+
+async function loadSandboxReplay(taskId) {
+    const responseData = await apiRequest(`/tasks/${encodeURIComponent(taskId)}/replay`);
+    const eventRows = responseData.events.length > 0
+        ? responseData.events.map((event) => `
+            <div class="replay-event">
+                <strong>${escapeHtml(event.event_type)}</strong>
+                · ${escapeHtml(event.source_mode)} → ${escapeHtml(event.mode)}
+                · ${escapeHtml(formatDate(event.occurred_at))}
+            </div>
+        `).join('')
+        : '<div class="empty-state">এই কাজের জন্য কোনো replay event নেই।</div>';
+
+    const existingReplay = elements.taskDetail.querySelector('[data-replay-events]');
+    if (existingReplay) {
+        existingReplay.remove();
+    }
+
+    const replayPanel = document.createElement('section');
+    replayPanel.className = 'panel';
+    replayPanel.dataset.replayEvents = 'true';
+    replayPanel.innerHTML = `<strong>Sandbox replay · read only</strong>${eventRows}`;
+    elements.taskDetail.append(replayPanel);
 }
 
 async function loadTask(taskId) {
@@ -395,6 +431,39 @@ elements.taskList.addEventListener('click', async (event) => {
 
     try {
         await loadTask(taskButton.dataset.taskId);
+    } catch (error) {
+        showNotice(elements.error, error.message);
+    }
+});
+
+elements.taskDetail.addEventListener('click', async (event) => {
+    const replayButton = event.target.closest('[data-replay-task-id]');
+    const transitionButton = event.target.closest('[data-live-transition-task-id]');
+
+    try {
+        if (replayButton) {
+            await loadSandboxReplay(replayButton.dataset.replayTaskId);
+        }
+
+        if (transitionButton) {
+            const shouldRequestTransition = window.confirm(
+                'সব safety gate পাস হলেই আলাদা Live task শুরু হবে। Live tool action-এ approval লাগবে। এগোবেন?',
+            );
+            if (!shouldRequestTransition) {
+                return;
+            }
+
+            const responseData = await apiRequest(
+                `/tasks/${encodeURIComponent(transitionButton.dataset.liveTransitionTaskId)}/transition-to-live`,
+                {
+                    method: 'POST',
+                    body: JSON.stringify({ confirm_live_transition: true }),
+                },
+            );
+            selectedTaskId = responseData.task.id;
+            await loadTasks();
+            showNotice(elements.success, 'নতুন Live task queue হয়েছে।');
+        }
     } catch (error) {
         showNotice(elements.error, error.message);
     }

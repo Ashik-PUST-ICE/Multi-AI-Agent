@@ -30,6 +30,10 @@ class AgentRunService
             return;
         }
 
+        if ($agentRun->mode !== $task->mode) {
+            throw new RuntimeException('The agent run mode does not match its task mode.');
+        }
+
         if ($agentRun->status === AGENT_RUN_STATUS_COMPLETED) {
             return;
         }

@@ -11,6 +11,7 @@ use App\Tools\ToolInterface;
 use App\Tools\ToolRegistry;
 use App\Tools\WebSearchTool;
 use Illuminate\Support\Facades\App;
+use Illuminate\Support\Facades\Http;
 use InvalidArgumentException;
 use LogicException;
 use Tests\TestCase;
@@ -19,6 +20,7 @@ class AgentFrameworkTest extends TestCase
 {
     public function test_sandbox_always_simulates_tools_and_agent_returns_provider_response(): void
     {
+        Http::preventStrayRequests();
         $tool = new class implements ToolInterface
         {
             public bool $executed = false;

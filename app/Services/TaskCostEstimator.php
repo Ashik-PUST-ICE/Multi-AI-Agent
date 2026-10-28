@@ -17,15 +17,19 @@ class TaskCostEstimator
      * @param  list<string>  $agentSequence
      * @return array<string, mixed>
      */
-    public function estimate(User $user, string $prompt, array $agentSequence): array
-    {
+    public function estimate(
+        User $user,
+        string $prompt,
+        array $agentSequence,
+        string $mode = TASK_MODE_SANDBOX,
+    ): array {
         $settings = $user->llmSettings;
         if ($settings === null) {
             return [
                 'status' => 'unavailable',
                 'currency' => null,
                 'maximum_cost' => null,
-                'maximum_tokens' => (int) config('llm.task_token_budget', 20000),
+                'maximum_tokens' => $this->maximumTaskTokens($mode),
                 'estimated_tokens' => null,
                 'can_complete' => null,
                 'agents' => [],
@@ -43,12 +47,12 @@ class TaskCostEstimator
         $totalMaximumCost = 0.0;
         $isCostAvailable = true;
         $canCompleteRoute = true;
-        $maximumTokens = (int) config('llm.task_token_budget', 20000);
+        $maximumTokens = $this->maximumTaskTokens($mode);
         $remainingTaskTokens = $maximumTokens;
 
         foreach ($agentSequence as $agentName) {
             $agentSpecification = $this->agentRegistry->activeSpec($agentName);
-            $modelSelection = $this->providerResolver->selectedModel($user, $agentName);
+            $modelSelection = $this->providerResolver->selectedModel($user, $agentName, $mode);
             $modelKey = $this->modelKey($modelSelection['provider'], $modelSelection['model']);
             $pricing = $modelPricing[$modelKey] ?? null;
             $estimatedInputTokens = $this->estimatedInputTokens($prompt);
@@ -126,5 +130,14 @@ class TaskCostEstimator
     private function modelKey(string $provider, string $model): string
     {
         return "{$provider}:{$model}";
+    }
+
+    private function maximumTaskTokens(string $mode): int
+    {
+        $configurationKey = $mode === TASK_MODE_SANDBOX
+            ? 'llm.sandbox_task_token_budget'
+            : 'llm.task_token_budget';
+
+        return (int) config($configurationKey, config('llm.task_token_budget', 20000));
     }
 }

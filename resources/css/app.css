@@ -81,6 +81,9 @@ main { max-width: 1260px; margin: 0 auto; padding: 31px 0 40px; }
 .form-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 4px; color: var(--muted); font-size: 10px; }
 .task-estimate { padding: 12px; border: 1px solid #e5e9f1; border-radius: 9px; background: #f8f9fc; color: #536078; font-size: 11px; line-height: 1.6; white-space: pre-line; }
 .usage-summary { color: var(--muted); font-size: 11px; text-align: right; }
+.mode-badge-live { border-color: #fecaca; background: #fff1f2; color: #b42318; }
+.task-mode-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.replay-event { padding: 9px 11px; border-bottom: 1px solid #edf0f5; color: var(--muted); font-size: 11px; }
 .button { display: inline-flex; min-height: 39px; align-items: center; justify-content: center; gap: 8px; padding: 0 15px; border: 1px solid transparent; border-radius: 8px; font-size: 11px; font-weight: 700; transition: background .16s ease, transform .16s ease; }
 .button:hover { transform: translateY(-1px); }
 .button:disabled { cursor: wait; opacity: .6; transform: none; }

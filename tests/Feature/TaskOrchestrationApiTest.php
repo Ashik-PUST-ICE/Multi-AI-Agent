@@ -34,6 +34,7 @@ class TaskOrchestrationApiTest extends TestCase
         $this->postJson('/api/v1/tasks', [
             'title' => 'Research task',
             'prompt' => 'Research a topic.',
+            'mode' => TASK_MODE_LIVE,
         ])->assertAccepted()
             ->assertJsonPath('task.title', 'Research task')
             ->assertJsonPath('task.status', TASK_STATUS_PENDING)
@@ -49,6 +50,8 @@ class TaskOrchestrationApiTest extends TestCase
         $this->assertSame('user', $agentRun->input['from']);
         $this->assertSame('Research', $agentRun->input['to']);
         $this->assertSame(AGENT_MESSAGE_SCHEMA_VERSION, $agentRun->input['schema_version']);
+        $this->assertSame(TASK_MODE_SANDBOX, $agentRun->mode);
+        $this->assertSame(TASK_MODE_SANDBOX, $task->runEvents()->firstOrFail()->mode);
         Queue::assertPushed(RunAgentJob::class);
     }
 

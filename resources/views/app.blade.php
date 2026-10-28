@@ -61,7 +61,7 @@
                             <h2 id="tasks-heading">নতুন কাজ শুরু করুন</h2>
                             <p class="section-description">আপনার কাজ sandbox-এ উপযুক্ত একটি বা একাধিক agent দিয়ে সম্পন্ন হবে।</p>
                         </div>
-                        <span class="mode-badge"><span></span> Sandbox mode</span>
+                        <span class="mode-badge"><span></span> Sandbox mode (default)</span>
                     </div>
 
                     <form class="task-form panel" id="task-form">

@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Agents\ComplexityRouter;
 use App\Llm\ChatResponse;
 use App\Llm\ProviderCatalog;
+use App\Llm\UserLlmProviderResolver;
 use App\Models\User;
 use App\Services\TaskCostEstimator;
 use App\Services\TaskTokenBudgetService;
@@ -121,6 +122,87 @@ class TaskRoutingAndBudgetTest extends TestCase
         $this->assertGreaterThan(0, $usage['input_tokens']);
         $this->assertSame(2, $usage['output_tokens']);
         $this->assertSame($usage['input_tokens'] + 2, $usage['total_tokens']);
+    }
+
+    public function test_sandbox_uses_cheapest_user_approved_model_and_lower_token_budget(): void
+    {
+        $catalog = app(ProviderCatalog::class);
+        $providerId = array_key_first($catalog->all());
+        $models = array_keys($catalog->provider($providerId)['models']);
+        $user = User::factory()->create();
+        $user->llmSettings()->create([
+            'provider' => $providerId,
+            'model' => $models[0],
+            'approved_models' => [
+                ['provider' => $providerId, 'model' => $models[0]],
+                ['provider' => $providerId, 'model' => $models[1]],
+            ],
+            'agent_models' => [],
+            'model_pricing' => [
+                [
+                    'provider' => $providerId,
+                    'model' => $models[0],
+                    'currency' => 'USD',
+                    'input_cost_per_million' => 20,
+                    'output_cost_per_million' => 20,
+                ],
+                [
+                    'provider' => $providerId,
+                    'model' => $models[1],
+                    'currency' => 'USD',
+                    'input_cost_per_million' => 1,
+                    'output_cost_per_million' => 1,
+                ],
+            ],
+        ]);
+
+        $resolver = app(UserLlmProviderResolver::class);
+        $this->assertSame($models[1], $resolver->selectedModel($user, 'Writer', TASK_MODE_SANDBOX)['model']);
+        $this->assertSame($models[0], $resolver->selectedModel($user, 'Writer', TASK_MODE_LIVE)['model']);
+
+        config([
+            'llm.sandbox_task_token_budget' => 100,
+            'llm.task_token_budget' => 1000,
+        ]);
+        $sandboxTask = $user->tasks()->create([
+            'title' => 'Sandbox budget',
+            'input' => ['prompt' => 'test'],
+            'mode' => TASK_MODE_SANDBOX,
+        ]);
+        $sandboxRun = $sandboxTask->agentRuns()->create([
+            'agent_name' => 'Writer',
+            'mode' => TASK_MODE_SANDBOX,
+            'input' => ['prompt' => 'test'],
+        ]);
+        $liveTask = $user->tasks()->create([
+            'title' => 'Live budget',
+            'input' => ['prompt' => 'test'],
+            'mode' => TASK_MODE_LIVE,
+        ]);
+        $liveRun = $liveTask->agentRuns()->create([
+            'agent_name' => 'Writer',
+            'mode' => TASK_MODE_LIVE,
+            'input' => ['prompt' => 'test'],
+        ]);
+        $budgetService = app(TaskTokenBudgetService::class);
+        $messages = [['role' => 'user', 'content' => 'test']];
+
+        $sandboxOutputTokens = $budgetService->maximumOutputTokens(
+            $sandboxRun,
+            $messages,
+            1000,
+            1000,
+            [],
+        );
+        $liveOutputTokens = $budgetService->maximumOutputTokens(
+            $liveRun,
+            $messages,
+            1000,
+            1000,
+            [],
+        );
+
+        $this->assertLessThan($liveOutputTokens, $sandboxOutputTokens);
     }
 
     public function test_missing_provider_settings_are_reported_by_the_estimate_endpoint(): void

@@ -7,9 +7,14 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class AgentMessage extends Model
 {
+    protected $attributes = [
+        'mode' => TASK_MODE_SANDBOX,
+    ];
+
     protected $fillable = [
         'task_id',
         'agent_run_id',
+        'mode',
         'role',
         'content',
         'sequence',
@@ -19,6 +24,7 @@ class AgentMessage extends Model
     protected function casts(): array
     {
         return [
+            'mode' => 'string',
             'sequence' => 'integer',
             'metadata' => 'array',
         ];

@@ -69,6 +69,8 @@ Paste the returned token into the dashboard's API token field. Never paste a tok
 | `POST` | `/api/v1/tasks/estimate` | Preview routing, token ceiling, and available user-entered price estimates |
 | `POST` | `/api/v1/tasks` | Create and queue a sandbox task |
 | `GET` | `/api/v1/tasks/{task}` | View task and agent-run status |
+| `GET` | `/api/v1/tasks/{task}/replay` | Read-only event replay in Sandbox mode |
+| `POST` | `/api/v1/tasks/{task}/transition-to-live` | Request a gated Sandbox-to-Live transition (currently fail-closed) |
 | `GET` | `/api/v1/approvals` | List the user's pending tool approvals |
 | `POST` | `/api/v1/approvals/{approval}/approve` | Approve the exact pending action |
 | `POST` | `/api/v1/approvals/{approval}/reject` | Reject the pending action |
@@ -78,7 +80,11 @@ Paste the returned token into the dashboard's API token field. Never paste a tok
 | `POST` | `/api/v1/admin/agent-specs/{agentName}/versions/{version}/status` | Advance draft → test → active |
 | `POST` | `/api/v1/admin/agent-specs/{agentName}/versions/{version}/rollback` | Create a new draft from an earlier version |
 
-Task submission accepts `title` and `prompt`. New tasks run in sandbox mode. Sensitive live tools require owner approval for the exact tool input; approval requests expire and are rejected when expired. Live web search remains disabled until its security adapter is implemented.
+Task submission accepts `title` and `prompt`; any client-supplied `mode` is ignored and tasks start in Sandbox. Sandbox tools are routed to `simulate()` only, sandbox runs use the configured lower token ceiling, and when user-entered rates exist they use the least expensive approved model in a single currency. Messages and run events carry their execution mode. The Sandbox replay endpoint is owner-scoped, read-only, and never invokes tools or providers.
+
+The explicit Live transition endpoint records user requests, but is currently fail-closed: a completed Sandbox task must have trusted `evaluation.passed` and `skeptic.approved` events, approved Live models, credentials, and enough Live token budget. Evaluation and Skeptic producers do not exist yet, so ordinary Sandbox tasks cannot currently transition. If those gates later pass, it creates a separate Live task; tool approvals and token limits continue to apply. No file, memory, or real-data connector is integrated, so Sandbox currently sees only the task prompt and simulated tool results; there is no real-data access toggle yet. Agent specs are mode-independent definitions, and agent packs are not implemented. Separate Sandbox/Live API keys are also not implemented.
+
+Sensitive live tools require owner approval for the exact tool input; approval requests expire and are rejected when expired. Live web search remains disabled until its security adapter is implemented.
 
 The complexity router sends a request to one agent by default and selects the four-agent pipeline only for an explicitly combined request. The web client displays the route and budget estimate before requiring a second submit to start. Per-agent and per-task token ceilings are hard limits; estimated input that leaves no room for a response is rejected. Provider-reported usage is stored per agent run, with a conservative text-based estimate when a provider omits usage metadata.
 

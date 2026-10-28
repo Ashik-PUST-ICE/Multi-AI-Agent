@@ -35,7 +35,9 @@ class AgentActivityLoggerTest extends TestCase
         $this->assertStringNotContainsString('top-secret-token', $message->content);
         $this->assertStringNotContainsString('very-secret-provider-key', $message->content);
         $this->assertSame('[REDACTED]', $message->metadata['api_key']);
+        $this->assertSame(TASK_MODE_SANDBOX, $message->mode);
         $this->assertSame('agent.message', $event->event_type);
+        $this->assertSame(TASK_MODE_SANDBOX, $event->mode);
         $this->assertSame($message->id, $event->payload['message_id']);
     }
 

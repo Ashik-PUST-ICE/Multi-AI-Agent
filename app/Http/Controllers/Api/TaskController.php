@@ -5,7 +5,9 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\CreateTaskRequest;
 use App\Http\Requests\Api\EstimateTaskRequest;
+use App\Http\Requests\Api\TransitionTaskModeRequest;
 use App\Services\OrchestratorService;
+use App\Services\TaskModeTransitionService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -13,6 +15,7 @@ class TaskController extends Controller
 {
     public function __construct(
         private readonly OrchestratorService $orchestratorService,
+        private readonly TaskModeTransitionService $taskModeTransitionService,
     ) {}
 
     public function store(CreateTaskRequest $request): JsonResponse
@@ -39,5 +42,15 @@ class TaskController extends Controller
     public function show(Request $request, int $task): JsonResponse
     {
         return $this->orchestratorService->show($request->user(), $task);
+    }
+
+    public function replay(Request $request, int $task): JsonResponse
+    {
+        return $this->orchestratorService->replay($request->user(), $task);
+    }
+
+    public function transitionToLive(TransitionTaskModeRequest $request, int $task): JsonResponse
+    {
+        return $this->taskModeTransitionService->transitionToLive($request->user(), $task);
     }
 }

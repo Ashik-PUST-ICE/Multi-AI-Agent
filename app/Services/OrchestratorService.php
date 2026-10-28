@@ -46,6 +46,7 @@ class OrchestratorService
             $user,
             $data['prompt'],
             $routing['agent_sequence'],
+            TASK_MODE_SANDBOX,
         );
 
         if (($costEstimate['can_complete'] ?? true) === false) {
@@ -70,6 +71,7 @@ class OrchestratorService
 
             $firstAgentRun = $task->agentRuns()->create([
                 'agent_name' => $routing['agent_sequence'][0],
+                'mode' => $task->mode,
                 'input' => (new AgentMessageEnvelope(
                     'user',
                     $routing['agent_sequence'][0],
@@ -86,6 +88,7 @@ class OrchestratorService
             $task->runEvents()->create([
                 'agent_run_id' => $firstAgentRun->id,
                 'event_type' => 'task.complexity_routed',
+                'mode' => $task->mode,
                 'sequence' => 1,
                 'payload' => [
                     ...$routing,
@@ -136,6 +139,32 @@ class OrchestratorService
             ->findOrFail($taskId);
 
         return $this->success(['task' => $this->taskData($task, true)]);
+    }
+
+    public function replay(User $user, int $taskId): JsonResponse
+    {
+        $task = $user->tasks()->findOrFail($taskId);
+        $events = $task->runEvents()
+            ->orderBy('occurred_at')
+            ->orderBy('id')
+            ->get()
+            ->map(static fn ($event): array => [
+                'id' => $event->id,
+                'event_type' => $event->event_type,
+                'source_mode' => $event->mode,
+                'mode' => TASK_MODE_SANDBOX,
+                'sequence' => $event->sequence,
+                'payload' => $event->payload,
+                'occurred_at' => $event->occurred_at,
+            ])
+            ->all();
+
+        return $this->success([
+            'task_id' => $task->id,
+            'replay_mode' => TASK_MODE_SANDBOX,
+            'read_only' => true,
+            'events' => $events,
+        ]);
     }
 
     public function index(User $user): JsonResponse
@@ -202,6 +231,7 @@ class OrchestratorService
             ))->toArray();
             $nextAgentRun = $task->agentRuns()->create([
                 'agent_name' => $nextAgentName,
+                'mode' => $task->mode,
                 'input' => $nextInput,
                 'status' => AGENT_RUN_STATUS_PENDING,
             ]);
@@ -326,6 +356,7 @@ class OrchestratorService
                 'id',
                 'agent_name',
                 'status',
+                'mode',
                 'output',
                 'token_usage',
                 'error_message',

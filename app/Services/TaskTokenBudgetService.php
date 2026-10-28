@@ -22,7 +22,8 @@ class TaskTokenBudgetService
     ): int {
         $estimatedInputTokens = $this->estimateMessageTokens($messages);
         $agentRemainingTokens = $agentTokenLimit - (int) ($agentUsage['total_tokens'] ?? 0);
-        $taskRemainingTokens = (int) config('llm.task_token_budget', 20000);
+        $taskTokenLimit = $this->taskTokenLimit($agentRun);
+        $taskRemainingTokens = $taskTokenLimit;
 
         if ($agentRun !== null) {
             $taskRemainingTokens -= $this->taskTokenUsage($agentRun);
@@ -113,7 +114,7 @@ class TaskTokenBudgetService
                 return 'The agent exceeded its configured token budget.';
             }
 
-            if ($taskTokenUsage > (int) config('llm.task_token_budget', 20000)) {
+            if ($taskTokenUsage > $this->taskTokenLimit($lockedAgentRun)) {
                 $agentRun->setAttribute('token_usage', $lockedAgentRun->token_usage);
 
                 return 'The task exceeded its configured total token budget.';
@@ -156,6 +157,16 @@ class TaskTokenBudgetService
             ->get(['id', 'token_usage']);
 
         return (int) $agentRuns->sum(static fn (AgentRun $run): int => (int) ($run->token_usage['total_tokens'] ?? 0));
+    }
+
+    private function taskTokenLimit(?AgentRun $agentRun): int
+    {
+        $mode = $agentRun?->mode ?? $agentRun?->task?->mode ?? TASK_MODE_SANDBOX;
+        $configurationKey = $mode === TASK_MODE_SANDBOX
+            ? 'llm.sandbox_task_token_budget'
+            : 'llm.task_token_budget';
+
+        return (int) config($configurationKey, config('llm.task_token_budget', 20000));
     }
 
     /**

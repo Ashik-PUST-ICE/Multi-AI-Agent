@@ -28,6 +28,7 @@ class AgentActivityLogger
 
             $message = $agentRun->messages()->create([
                 'task_id' => $agentRun->task_id,
+                'mode' => $agentRun->mode,
                 'role' => $role,
                 'content' => $safeContent,
                 'sequence' => $messageSequence,
@@ -37,6 +38,7 @@ class AgentActivityLogger
             $agentRun->runEvents()->create([
                 'task_id' => $agentRun->task_id,
                 'event_type' => 'agent.message',
+                'mode' => $agentRun->mode,
                 'sequence' => $eventSequence,
                 'payload' => [
                     'message_id' => $message->id,
@@ -62,6 +64,7 @@ class AgentActivityLogger
         $agentRun->runEvents()->create([
             'task_id' => $agentRun->task_id,
             'event_type' => $eventType,
+            'mode' => $agentRun->mode,
             'sequence' => $eventSequence,
             'payload' => $this->redactValue($payload),
             'occurred_at' => now(),

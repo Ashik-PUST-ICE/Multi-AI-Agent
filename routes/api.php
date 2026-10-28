@@ -38,6 +38,12 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/v1/tasks/{task}', [TaskController::class, 'show'])
         ->whereNumber('task')
         ->name('api.v1.tasks.show');
+    Route::get('/v1/tasks/{task}/replay', [TaskController::class, 'replay'])
+        ->whereNumber('task')
+        ->name('api.v1.tasks.replay');
+    Route::post('/v1/tasks/{task}/transition-to-live', [TaskController::class, 'transitionToLive'])
+        ->whereNumber('task')
+        ->name('api.v1.tasks.transition-to-live');
     Route::get('/v1/approvals', [ToolApprovalController::class, 'index'])->name('api.v1.approvals.index');
     Route::post('/v1/approvals/{approval}/approve', [ToolApprovalController::class, 'approve'])
         ->whereNumber('approval')

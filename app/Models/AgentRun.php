@@ -10,12 +10,14 @@ class AgentRun extends Model
 {
     protected $attributes = [
         'status' => AGENT_RUN_STATUS_PENDING,
+        'mode' => TASK_MODE_SANDBOX,
     ];
 
     protected $fillable = [
         'task_id',
         'agent_name',
         'status',
+        'mode',
         'input',
         'output',
         'token_usage',
@@ -28,6 +30,7 @@ class AgentRun extends Model
     {
         return [
             'status' => 'integer',
+            'mode' => 'string',
             'input' => 'array',
             'output' => 'array',
             'token_usage' => 'array',

@@ -69,7 +69,8 @@ abstract class BaseAgent
             throw new RuntimeException('User-specific provider resolution is not configured.');
         }
 
-        $resolvedProvider = $this->userProviderResolver->resolve($user, $this->name());
+        $executionMode = $agentRun?->mode ?? $agentRun?->task?->mode ?? $this->mode;
+        $resolvedProvider = $this->userProviderResolver->resolve($user, $this->name(), $executionMode);
 
         return $this->runWithProvider(
             $resolvedProvider['provider'],

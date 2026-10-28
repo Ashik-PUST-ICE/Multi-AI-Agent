@@ -123,6 +123,7 @@ class ToolApprovalApiTest extends TestCase
         ]);
         $agentRun = $task->agentRuns()->create([
             'agent_name' => 'Research',
+            'mode' => TASK_MODE_LIVE,
             'input' => [
                 'prompt' => 'Search for Laravel.',
                 'context' => [],
@@ -158,6 +159,7 @@ class ToolApprovalApiTest extends TestCase
         ]);
         $agentRun = $task->agentRuns()->create([
             'agent_name' => 'Research',
+            'mode' => TASK_MODE_LIVE,
             'input' => ['prompt' => 'Test approval.', 'context' => []],
             'status' => AGENT_RUN_STATUS_PENDING,
         ]);
