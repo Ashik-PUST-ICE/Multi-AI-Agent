@@ -47,9 +47,16 @@ class AgentRun extends Model
                 return;
             }
 
+            $agentRun->mode = $task->mode;
             $agentRun->trace_id ??= $task->trace_id;
             $agentRun->trace_span_id ??= bin2hex(random_bytes(8));
             $agentRun->parent_span_id ??= $task->trace_span_id;
+        });
+
+        static::updating(function (self $agentRun): void {
+            if ($agentRun->isDirty('mode')) {
+                throw new \LogicException('An agent run mode is immutable; create it from a task in the intended mode.');
+            }
         });
     }
 

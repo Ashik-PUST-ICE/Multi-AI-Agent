@@ -13,17 +13,23 @@ class RunEvent extends Model
             $agentRun = $event->agent_run_id === null
                 ? null
                 : AgentRun::query()->find($event->agent_run_id);
-            $task = $event->task_id === null
-                ? $agentRun?->task
-                : Task::query()->find($event->task_id);
+            $task = $agentRun?->task
+                ?? ($event->task_id === null ? null : Task::query()->find($event->task_id));
             if ($task === null) {
                 return;
             }
 
-            $event->task_id ??= $task->id;
+            $event->task_id = $task->id;
+            $event->mode = $agentRun?->mode ?? $task->mode;
             $event->trace_id ??= $task->trace_id;
             $event->trace_span_id ??= bin2hex(random_bytes(8));
             $event->parent_span_id ??= $agentRun?->trace_span_id ?? $task->trace_span_id;
+        });
+
+        static::updating(function (self $event): void {
+            if ($event->isDirty('mode')) {
+                throw new \LogicException('A recorded event mode is immutable.');
+            }
         });
     }
 

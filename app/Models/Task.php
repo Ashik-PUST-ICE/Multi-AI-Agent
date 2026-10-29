@@ -50,6 +50,16 @@ class Task extends Model
             $task->objective_sha256 ??= hash('sha256', (string) $task->description);
             $task->trace_id ??= bin2hex(random_bytes(16));
             $task->trace_span_id ??= bin2hex(random_bytes(8));
+
+            if (! in_array($task->mode, [TASK_MODE_SANDBOX, TASK_MODE_LIVE], true)) {
+                throw new \InvalidArgumentException('A task must use a supported execution mode.');
+            }
+        });
+
+        static::updating(function (self $task): void {
+            if ($task->isDirty('mode')) {
+                throw new \LogicException('A task mode is immutable; use the explicit Sandbox-to-Live transition.');
+            }
         });
     }
 
