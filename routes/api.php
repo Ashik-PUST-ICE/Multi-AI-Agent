@@ -9,6 +9,7 @@ use App\Http\Controllers\Api\KnowledgeSystemSettingsController;
 use App\Http\Controllers\Api\ObservabilityController;
 use App\Http\Controllers\Api\ProviderSettingsController;
 use App\Http\Controllers\Api\SecurityControlController;
+use App\Http\Controllers\Api\SkillController;
 use App\Http\Controllers\Api\TaskController;
 use App\Http\Controllers\Api\TaskReplayShareController;
 use App\Http\Controllers\Api\ToolApprovalController;
@@ -66,6 +67,7 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
     });
 
     Route::get('/v1/agent-packs', [AgentPackController::class, 'index'])->name('api.v1.agent-packs.index');
+    Route::get('/v1/skills', [SkillController::class, 'index'])->name('api.v1.skills.index');
     Route::put('/v1/agent-packs/{slug}/installation', [AgentPackController::class, 'install'])
         ->where('slug', '[a-z0-9-]+')
         ->name('api.v1.agent-packs.installation');

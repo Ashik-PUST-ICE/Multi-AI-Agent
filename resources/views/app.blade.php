@@ -80,6 +80,10 @@
                     <span aria-hidden="true">✦</span>
                     <span>Brain</span>
                 </button>
+                <button class="navigation-link" data-view="skills" type="button">
+                    <span aria-hidden="true">◇</span>
+                    <span>Skills</span>
+                </button>
                 <button class="navigation-link" data-view="knowledge" type="button">
                     <span aria-hidden="true">▤</span>
                     <span>ফাইল ও Memory</span>
@@ -125,6 +129,7 @@
                         <textarea id="task-prompt" name="prompt" rows="5" maxlength="20000" placeholder="কাজটি বিস্তারিত লিখুন..." required></textarea>
                         <label for="task-success-criteria">সাফল্যের শর্ত (প্রতি লাইনে একটি, ঐচ্ছিক)</label>
                         <textarea id="task-success-criteria" name="success_criteria" rows="3" maxlength="5000" placeholder="যেমন: অন্তত ৩টি নির্ভরযোগ্য উৎস ব্যবহার করবে&#10;উত্তরটি বাংলায় দেবে"></textarea>
+                        <button class="button button-quiet button-small" id="apply-task-criteria" type="button" hidden>প্রস্তাবিত criteria সম্পাদনার জন্য যোগ করুন</button>
                         <label for="task-agent-pack">Agent pack (ঐচ্ছিক)</label>
                         <select id="task-agent-pack" name="agent_pack">
                             <option value="">কোনো pack নয়</option>
@@ -334,6 +339,20 @@
                     </form>
                 </section>
 
+                <section class="view-panel" id="skills-view" aria-labelledby="skills-heading">
+                    <div class="section-heading">
+                        <div>
+                            <p class="eyebrow">PROGRESSIVE TASK GUIDANCE</p>
+                            <h2 id="skills-heading">Skills</h2>
+                            <p class="section-description">শুধু curated built-in skill চালু আছে। Task অনুযায়ী সর্বোচ্চ দুটি skill-এর নির্দেশনা দেওয়া হয়; কোনো skill tool বা trust permission দিতে পারে না।</p>
+                        </div>
+                    </div>
+                    <div class="agent-directory" id="skill-directory" aria-live="polite">
+                        <div class="empty-state">Skills তালিকা লোড হচ্ছে।</div>
+                    </div>
+                    <p class="form-help">বাইরের skill install, skill script execution, version publishing ও skill-generated suggestions এখনো বন্ধ।</p>
+                </section>
+
                 <section class="view-panel" id="knowledge-view" aria-labelledby="knowledge-heading">
                     <div class="section-heading">
                         <div>
@@ -456,6 +475,7 @@
         <div class="mobile-more-menu" id="mobile-more-menu" hidden>
             <p>Provider, API key ও routing controls Brain পেজে পরিচালনা করুন।</p>
             <button class="button button-quiet button-small" data-view="brain" type="button">Brain settings খুলুন</button>
+            <button class="button button-quiet button-small" data-view="skills" type="button">Skills খুলুন</button>
             <button class="button button-quiet button-small" data-view="knowledge" type="button">ফাইল ও Memory খুলুন</button>
         </div>
     </div>

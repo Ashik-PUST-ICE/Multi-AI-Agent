@@ -79,6 +79,7 @@ const elements = {
     pageTitle: document.querySelector('#page-title'),
     success: document.querySelector('#global-success'),
     taskEstimate: document.querySelector('#task-estimate'),
+    applyTaskCriteria: document.querySelector('#apply-task-criteria'),
     taskDetail: document.querySelector('#task-detail'),
     taskForm: document.querySelector('#task-form'),
     taskMaxCost: document.querySelector('#task-max-cost'),
@@ -87,6 +88,7 @@ const elements = {
     stagnationCount: document.querySelector('#stagnation-count'),
     skepticSignal: document.querySelector('#skeptic-signal'),
     failureCategories: document.querySelector('#failure-categories'),
+    skillDirectory: document.querySelector('#skill-directory'),
     tokenInput: document.querySelector('#api-token'),
     views: document.querySelectorAll('.view-panel'),
     navigationButtons: document.querySelectorAll('[data-view]'),
@@ -259,6 +261,7 @@ function switchView(viewName) {
         approvals: 'অনুমোদন',
         agents: 'এজেন্ট',
         brain: 'Brain ও routing',
+        skills: 'Skills',
         knowledge: 'ফাইল ও Memory',
     };
 
@@ -286,6 +289,25 @@ function switchView(viewName) {
     if (selectedView === 'knowledge' && apiToken) {
         loadKnowledge().catch((error) => showNotice(elements.error, error.message));
     }
+
+    if (selectedView === 'skills' && apiToken) {
+        loadSkills().catch((error) => showNotice(elements.error, error.message));
+    }
+}
+
+async function loadSkills() {
+    const responseData = await apiRequest('/skills');
+    const skills = responseData.skills || [];
+    elements.skillDirectory.innerHTML = skills.map((skill) => `
+        <article class="panel agent-directory-card">
+            <div class="agent-directory-heading">
+                <h3>${escapeHtml(skill.name)}</h3>
+                <span class="status-chip">${escapeHtml(skill.version)} · ${escapeHtml(skill.status)}</span>
+            </div>
+            <p>${escapeHtml(skill.description)}</p>
+            <small>Owner: ${escapeHtml(skill.owner)} · Minimum trust: ${escapeHtml(skill.minimum_trust_level)} · Required tools: ${skill.required_tools.length ? escapeHtml(skill.required_tools.join(', ')) : 'none'} · Scripts: disabled</small>
+        </article>
+    `).join('');
 }
 
 function renderTaskList(tasks) {
@@ -1857,6 +1879,7 @@ elements.taskForm.addEventListener('submit', async (event) => {
                 ? null
                 : {
                     ...taskData,
+                    task_brief: estimateResponse.task_brief,
                     knowledge_context_token: estimateResponse.knowledge_preview?.token || null,
                     memory_context_hash: estimateResponse.memory_preview?.hash || null,
                 };
@@ -1874,6 +1897,7 @@ elements.taskForm.addEventListener('submit', async (event) => {
         });
         pendingTaskConfirmation = null;
         elements.taskEstimate.hidden = true;
+        elements.applyTaskCriteria.hidden = true;
         submitButton.innerHTML = 'কাজ জমা দিন <span aria-hidden="true">→</span>';
         elements.taskForm.reset();
         selectedTaskId = responseData.task.id;
@@ -1916,7 +1940,20 @@ function renderTaskEstimate(responseData) {
         return `${agentEstimate.agent}: ${agentEstimate.provider}/${agentEstimate.model} — ${agentEstimate.routing_reason}${fallbackLine}`;
     });
 
-    elements.taskEstimate.textContent = [
+    const estimateLines = [
+        `Task brief: ${responseData.task_brief?.language || 'unknown'} / ${responseData.task_brief?.intent || 'unknown'}; risk ${responseData.task_brief?.risk?.level || 'unknown'}; complexity ${responseData.task_brief?.complexity?.level || 'unknown'}`,
+        responseData.task_brief?.ambiguity?.questions?.length
+            ? `সম্ভাব্য clarification (সর্বোচ্চ ২টি): ${responseData.task_brief.ambiguity.questions.join(' | ')}`
+            : '',
+        responseData.task_brief?.success_criteria_suggestions?.length
+            ? `প্রস্তাবিত success criteria (ইচ্ছামতো সম্পাদনা করুন): ${responseData.task_brief.success_criteria_suggestions.join(' | ')}`
+            : '',
+        responseData.matched_skills?.length
+            ? `Matched skills: ${responseData.matched_skills.map((skill) => `${skill.name} — ${skill.description}`).join(' | ')}`
+            : 'Matched skills: none',
+        responseData.task_brief?.risk?.never_auto_indicators?.length
+            ? `সতর্কতা: সম্ভাব্য Never-Auto কাজ শনাক্ত (${responseData.task_brief.risk.never_auto_indicators.join(', ')}); এই বিশ্লেষণ নিজে কোনো অনুমতি দেয় না।`
+            : '',
         `পথ: ${routing.strategy === 'multi_agent' ? 'একাধিক agent' : 'একটি agent'} (${routing.agent_sequence.join(' → ')})`,
         responseData.knowledge_preview?.sources?.length
             ? `Selected file context: ${responseData.knowledge_preview.sources.map((source) => `${source.name} (chunk ${source.chunk})`).join(', ')}`
@@ -1936,9 +1973,35 @@ function renderTaskEstimate(responseData) {
         `Routing evaluation: ${routingComparison.evaluation?.reason || 'উপলব্ধ নয়'}`,
         'হিসাবটি configured fallback-সহ সর্বোচ্চ token budget ও আনুমানিক input token-এর উপর ভিত্তি করে; failed request-এর খরচসহ provider-এর প্রকৃত bill ভিন্ন হতে পারে।',
         'এখন আবার বোতাম চাপলে কাজ শুরু হবে।',
-    ].join('\n');
+    ].filter(Boolean);
+    elements.taskEstimate.textContent = estimateLines.join('\n');
+    elements.applyTaskCriteria.hidden = costEstimate.can_complete === false
+        || !responseData.task_brief?.success_criteria_suggestions?.length;
     elements.taskEstimate.hidden = false;
 }
+
+elements.applyTaskCriteria.addEventListener('click', () => {
+    const suggestions = pendingTaskConfirmation?.task_brief?.success_criteria_suggestions || [];
+    if (suggestions.length === 0) {
+        return;
+    }
+
+    const criteriaField = elements.taskForm.querySelector('#task-success-criteria');
+    const currentCriteria = criteriaField.value.split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
+    criteriaField.value = [...new Set([...currentCriteria, ...suggestions])].join('\n');
+    pendingTaskConfirmation = null;
+    elements.applyTaskCriteria.hidden = true;
+    elements.taskForm.querySelector('button[type="submit"]').innerHTML = 'অনুমান দেখুন <span aria-hidden="true">→</span>';
+    criteriaField.focus();
+});
+
+elements.taskForm.addEventListener('input', () => {
+    elements.applyTaskCriteria.hidden = true;
+});
+
+elements.taskForm.addEventListener('change', () => {
+    elements.applyTaskCriteria.hidden = true;
+});
 
 elements.taskList.addEventListener('click', async (event) => {
     const taskButton = event.target.closest('[data-task-id]');

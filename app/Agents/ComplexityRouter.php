@@ -7,9 +7,12 @@ final class ComplexityRouter
     /**
      * @return array{strategy: string, agent_sequence: list<string>, reason: string}
      */
-    public function route(string $prompt): array
+    public function route(string $prompt, ?string $intakeComplexity = null): array
     {
         $normalizedPrompt = mb_strtolower($prompt);
+        $complexityEstimate = in_array($intakeComplexity, ['simple', 'moderate', 'complex'], true)
+            ? $intakeComplexity
+            : null;
         $requestsMultipleRoles = preg_match(
             '/\b(research and write|research then write|compare and recommend|analyze and review|'
                 .'independent review|multiple agents|multi-agent)\b|একাধিক এজেন্ট|গবেষণা করে লিখ|'
@@ -22,6 +25,7 @@ final class ComplexityRouter
                 'strategy' => 'multi_agent',
                 'agent_sequence' => ['Orchestrator', 'Research', 'Writer', 'Reviewer'],
                 'reason' => 'The request explicitly combines research or analysis with synthesis or independent review.',
+                'intake_complexity' => $complexityEstimate,
             ];
         }
 
@@ -31,6 +35,7 @@ final class ComplexityRouter
             'strategy' => 'single_agent',
             'agent_sequence' => [$singleAgent],
             'reason' => "The request does not show a clear benefit from splitting; routing directly to {$singleAgent}.",
+            'intake_complexity' => $complexityEstimate,
         ];
     }
 
