@@ -103,14 +103,44 @@ class UserLlmProviderResolver
         bool $requireConfiguredCredentials = false,
         ?string $prompt = null,
     ): array {
-        return $this->modelRouter->select(
+        $excludedModels = [];
+        if ($agentName === 'Skeptic') {
+            $writerSelection = $this->modelRouter->select(
+                $user,
+                'Writer',
+                $mode,
+                null,
+                $requireConfiguredCredentials,
+                $prompt,
+            );
+            $excludedModels[] = [
+                'provider' => $writerSelection['provider'],
+                'model' => $writerSelection['model'],
+            ];
+            foreach ($writerSelection['fallback_candidates'] as $fallbackSelection) {
+                $excludedModels[] = $fallbackSelection;
+            }
+
+            if ($brainModeOverride === AGENT_BRAIN_MODE_FIXED) {
+                $brainModeOverride = AGENT_BRAIN_MODE_AUTO;
+            }
+        }
+
+        $selection = $this->modelRouter->select(
             $user,
             $agentName,
             $mode,
             $brainModeOverride,
             $requireConfiguredCredentials,
             $prompt,
+            $excludedModels,
         );
+
+        if ($agentName === 'Skeptic') {
+            $selection['reason'] .= ' A distinct user-approved model is required for independent review; a shared Fixed model is not reused.';
+        }
+
+        return $selection;
     }
 
     public function hasConfiguredCredentials(User $user, string $providerId): bool

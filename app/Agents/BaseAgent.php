@@ -11,6 +11,7 @@ use App\Models\User;
 use App\Services\AgentActivityLogger;
 use App\Services\TaskTokenBudgetService;
 use App\Services\TrustLevelService;
+use App\Tools\ToolApprovalRequiredException;
 use App\Tools\ToolRegistry;
 use App\Tools\ToolTrustLevelException;
 use Illuminate\Http\Client\ConnectionException;
@@ -109,6 +110,7 @@ abstract class BaseAgent
         array $fallbacks = [],
         ?User $user = null,
     ): array {
+        $agentStartedAt = hrtime(true);
         $normalizedInput = $this->normalizeInput($input);
         $agentRegistry = $this->agentRegistry ?? app(AgentRegistry::class);
         $schemaValidator = $this->schemaValidator ?? app(SchemaValidator::class);
@@ -129,12 +131,15 @@ abstract class BaseAgent
         $usage = $agentRun?->token_usage ?? [];
         $toolCallCount = 0;
         $activeProvider = $provider;
+        $activeProviderId = $routing['provider'] ?? null;
         $activeModel = $model;
+        $activePricing = $this->modelPricing($user, $activeProviderId, $activeModel);
         $maximumSteps = max(1, (int) ($agentSpecification['max_steps'] ?? self::MAX_TOOL_ITERATIONS));
         $agentTokenLimit = max(1, (int) ($agentSpecification['max_tokens'] ?? 2000));
         $this->recordInitialMessages($agentRun, $messages);
         $this->activityLogger?->recordEvent($agentRun, 'agent.started', [
             'agent' => $this->name(),
+            'provider' => $activeProviderId,
             'model' => $model,
             'mode' => $this->mode,
             'spec_version' => $agentSpecification['version'] ?? 1,
@@ -165,7 +170,9 @@ abstract class BaseAgent
 
                 $fallback = array_shift($fallbacks);
                 $activeProvider = $fallback['provider'];
+                $activeProviderId = $fallback['selection']['provider'];
                 $activeModel = $fallback['model'];
+                $activePricing = $this->modelPricing($user, $activeProviderId, $activeModel);
                 $this->activityLogger?->recordEvent($agentRun, 'agent.model_fallback', [
                     'from_provider' => $routing['provider'] ?? null,
                     'from_model' => $routing['model'] ?? $model,
@@ -211,7 +218,11 @@ abstract class BaseAgent
                 }
                 $this->activityLogger?->recordEvent($agentRun, 'agent.completed', [
                     'agent' => $this->name(),
+                    'provider' => $activeProviderId,
+                    'model' => $activeModel,
                     'usage' => $usage,
+                    'duration_ms' => (int) ((hrtime(true) - $agentStartedAt) / 1_000_000),
+                    'cost' => $this->usageCost($usage, $activePricing),
                 ]);
 
                 return $result;
@@ -477,6 +488,11 @@ abstract class BaseAgent
             $trustLevel = $user === null
                 ? AGENT_TRUST_LEVEL_NONE
                 : app(TrustLevelService::class)->currentLevel($user, $this->name());
+            $toolStartedAt = hrtime(true);
+            $this->activityLogger?->recordEvent($agentRun, 'tool.started', [
+                'tool_name' => $toolName,
+                'input' => $arguments,
+            ]);
 
             try {
                 $toolResult = $this->tools->run(
@@ -499,7 +515,22 @@ abstract class BaseAgent
                 }
 
                 throw $exception;
+            } catch (ToolApprovalRequiredException $exception) {
+                throw $exception;
+            } catch (\Throwable $exception) {
+                $this->activityLogger?->recordEvent($agentRun, 'tool.failed', [
+                    'tool_name' => $toolName,
+                    'duration_ms' => (int) ((hrtime(true) - $toolStartedAt) / 1_000_000),
+                    'error' => $exception->getMessage(),
+                ]);
+
+                throw $exception;
             }
+            $this->activityLogger?->recordEvent($agentRun, 'tool.completed', [
+                'tool_name' => $toolName,
+                'duration_ms' => (int) ((hrtime(true) - $toolStartedAt) / 1_000_000),
+                'result' => $toolResult,
+            ]);
             $toolCallId = $toolCall['id'] ?? '';
             $encodedResult = json_encode($toolResult, JSON_THROW_ON_ERROR);
             $this->activityLogger?->recordMessage(
@@ -592,6 +623,50 @@ abstract class BaseAgent
                 'tool_call_id' => $toolCallId,
             ],
         );
+    }
+
+    /**
+     * @return array{currency: string, input_cost_per_million: float, output_cost_per_million: float}|null
+     */
+    private function modelPricing(?User $user, mixed $provider, ?string $model): ?array
+    {
+        if (! is_string($provider) || ! is_string($model) || $user === null) {
+            return null;
+        }
+
+        foreach ($user->llmSettings?->model_pricing ?? [] as $pricing) {
+            if (($pricing['provider'] ?? null) === $provider && ($pricing['model'] ?? null) === $model) {
+                return [
+                    'currency' => $pricing['currency'],
+                    'input_cost_per_million' => (float) $pricing['input_cost_per_million'],
+                    'output_cost_per_million' => (float) $pricing['output_cost_per_million'],
+                ];
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param  array<string, int|float>  $usage
+     * @param  array{currency: string, input_cost_per_million: float, output_cost_per_million: float}|null  $pricing
+     * @return array{amount: float, currency: string}|null
+     */
+    private function usageCost(array $usage, ?array $pricing): ?array
+    {
+        if ($pricing === null) {
+            return null;
+        }
+
+        $amount = (
+            ((int) ($usage['input_tokens'] ?? 0) * $pricing['input_cost_per_million'])
+            + ((int) ($usage['output_tokens'] ?? 0) * $pricing['output_cost_per_million'])
+        ) / 1_000_000;
+
+        return [
+            'amount' => round($amount, 8),
+            'currency' => $pricing['currency'],
+        ];
     }
 
     /**

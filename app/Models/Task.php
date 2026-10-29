@@ -73,6 +73,11 @@ class Task extends Model
         return $this->hasMany(RunEvent::class);
     }
 
+    public function replayShares(): HasMany
+    {
+        return $this->hasMany(TaskReplayShare::class);
+    }
+
     public function modeTransitions(): HasMany
     {
         return $this->hasMany(ModeTransition::class);

@@ -3,6 +3,7 @@
 namespace App\Agents;
 
 use App\Llm\UserLlmProviderResolver;
+use App\Services\AgentActivityLogger;
 use App\Tools\ToolRegistry;
 use InvalidArgumentException;
 
@@ -16,12 +17,14 @@ class AgentFactory
         'Research' => ResearchAgent::class,
         'Writer' => WriterAgent::class,
         'Reviewer' => ReviewerAgent::class,
+        'Skeptic' => SkepticAgent::class,
     ];
 
     public function __construct(
         private readonly ToolRegistry $toolRegistry,
         private readonly UserLlmProviderResolver $userLlmProviderResolver,
         private readonly AgentRegistry $agentRegistry,
+        private readonly AgentActivityLogger $activityLogger,
     ) {}
 
     public function make(string $agentName, string $mode): BaseAgent
@@ -39,6 +42,7 @@ class AgentFactory
             'tools' => $this->toolRegistry,
             'mode' => $mode,
             'userProviderResolver' => $this->userLlmProviderResolver,
+            'activityLogger' => $this->activityLogger,
             'specification' => $agentSpecification,
             'agentRegistry' => $this->agentRegistry,
         ]);

@@ -38,6 +38,7 @@ class ModelRouter
         ?string $brainModeOverride = null,
         bool $requireConfiguredCredentials = false,
         ?string $prompt = null,
+        array $excludedModels = [],
     ): array {
         $settings = $user->llmSettings;
         if ($settings === null) {
@@ -65,12 +66,14 @@ class ModelRouter
 
         if ($brainMode === AGENT_BRAIN_MODE_FIXED) {
             $selectedModel = $defaultSelection;
+            $this->assertNotExcluded($agentName, $selectedModel, $excludedModels);
             $reason = 'The agent is configured to use the fixed Settings model.';
         } elseif ($brainMode === AGENT_BRAIN_MODE_CUSTOM) {
             $selectedModel = $settings->agent_models[$agentName] ?? null;
             if ($selectedModel === null) {
                 throw new InvalidArgumentException("Agent [{$agentName}] is in Custom mode without a selected model.");
             }
+            $this->assertNotExcluded($agentName, $selectedModel, $excludedModels);
             $reason = 'The agent is configured to use its custom approved model.';
         } elseif ($brainMode === AGENT_BRAIN_MODE_AUTO) {
             [$selectedModel, $reason] = $this->selectAutomatically(
@@ -83,6 +86,7 @@ class ModelRouter
                 $requireConfiguredCredentials,
                 $complexity,
                 $prompt ?? '',
+                $excludedModels,
             );
         } else {
             throw new InvalidArgumentException("Unsupported Brain mode [{$brainMode}] for agent [{$agentName}].");
@@ -95,6 +99,7 @@ class ModelRouter
             $settings->approved_models ?? [],
             $selectedModel,
             $prompt,
+            $excludedModels,
         );
         $modelCapabilities = $this->catalog->model($selectedModel['provider'], $selectedModel['model']);
 
@@ -117,6 +122,7 @@ class ModelRouter
                 ],
                 $requireConfiguredCredentials,
                 $prompt,
+                $excludedModels,
             ),
         ];
     }
@@ -137,18 +143,25 @@ class ModelRouter
         bool $requireConfiguredCredentials,
         string $complexity,
         string $prompt,
+        array $excludedModels = [],
     ): array {
         $compatibleModels = $this->compatibleApprovedModels(
             $user,
             $agentName,
             $approvedModels,
             $requireConfiguredCredentials,
+            $prompt,
+            $excludedModels,
         );
         if ($compatibleModels === []) {
             throw new InvalidArgumentException(
-                $requireConfiguredCredentials
+                $excludedModels !== []
+                    ? ($requireConfiguredCredentials
+                        ? "Agent [{$agentName}] requires a different approved model from Writer with configured credentials. Approve another compatible model and save its provider credentials in Settings."
+                        : "Agent [{$agentName}] requires a different approved model from Writer. Approve another compatible model in Settings.")
+                    : ($requireConfiguredCredentials
                     ? "No approved model with configured credentials meets the capabilities required by agent [{$agentName}]."
-                    : "No approved model meets the capabilities required by agent [{$agentName}].",
+                    : "No approved model meets the capabilities required by agent [{$agentName}]."),
             );
         }
 
@@ -224,6 +237,7 @@ class ModelRouter
         array $approvedModels,
         bool $requireConfiguredCredentials = false,
         ?string $prompt = null,
+        array $excludedModels = [],
     ): array {
         $agentSpecification = $this->agentRegistry->activeSpec($agentName);
         $requiresTools = ($agentSpecification['allowed_tools'] ?? []) !== [];
@@ -238,6 +252,10 @@ class ModelRouter
             $capabilities = $this->catalog->model($providerId, $modelId);
 
             if ($requireConfiguredCredentials && ! $this->hasConfiguredCredentials($user, $providerId, $provider)) {
+                continue;
+            }
+
+            if ($this->isExcluded($providerId, $modelId, $excludedModels)) {
                 continue;
             }
 
@@ -404,8 +422,16 @@ class ModelRouter
         array $approvedModels,
         array $selection,
         ?string $prompt = null,
+        array $excludedModels = [],
     ): void {
-        foreach ($this->compatibleApprovedModels($user, $agentName, $approvedModels, false, $prompt) as $compatibleModel) {
+        foreach ($this->compatibleApprovedModels(
+            $user,
+            $agentName,
+            $approvedModels,
+            false,
+            $prompt,
+            $excludedModels,
+        ) as $compatibleModel) {
             if ($compatibleModel['provider'] === $selection['provider']
                 && $compatibleModel['model'] === $selection['model']) {
                 return;
@@ -452,6 +478,7 @@ class ModelRouter
         array $configuredFallback,
         bool $requireConfiguredCredentials,
         ?string $prompt,
+        array $excludedModels = [],
     ): array {
         $compatibleModels = $this->compatibleApprovedModels(
             $user,
@@ -459,6 +486,7 @@ class ModelRouter
             $approvedModels,
             $requireConfiguredCredentials,
             $prompt,
+            $excludedModels,
         );
         $compatibleModels = array_values(array_filter(
             $compatibleModels,
@@ -486,6 +514,33 @@ class ModelRouter
         }
 
         return $fallbackCandidates;
+    }
+
+    /**
+     * @param  array{provider: string, model: string}  $selection
+     * @param  list<array{provider: string, model: string}>  $excludedModels
+     */
+    private function assertNotExcluded(string $agentName, array $selection, array $excludedModels): void
+    {
+        if ($this->isExcluded($selection['provider'], $selection['model'], $excludedModels)) {
+            throw new InvalidArgumentException(
+                "Agent [{$agentName}] requires an approved model different from the Writer model. Approve another compatible model in Settings.",
+            );
+        }
+    }
+
+    /**
+     * @param  list<array{provider: string, model: string}>  $excludedModels
+     */
+    private function isExcluded(string $provider, string $model, array $excludedModels): bool
+    {
+        foreach ($excludedModels as $excludedModel) {
+            if ($excludedModel['provider'] === $provider && $excludedModel['model'] === $model) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function modelKey(string $provider, string $model): string

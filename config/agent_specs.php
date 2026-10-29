@@ -6,6 +6,7 @@ return [
         'Research' => AGENT_TRUST_LEVEL_READ,
         'Writer' => AGENT_TRUST_LEVEL_NONE,
         'Reviewer' => AGENT_TRUST_LEVEL_NONE,
+        'Skeptic' => AGENT_TRUST_LEVEL_NONE,
     ],
     'agents' => [
         'Orchestrator' => [
@@ -119,6 +120,41 @@ return [
             'timeout_seconds' => 60,
             'stop_conditions' => ['A final response is returned without pending tool calls.'],
             'success_criteria' => ['The review identifies material gaps against the user request.'],
+        ],
+        'Skeptic' => [
+            'role' => 'Independently challenges claims and assesses task success and confidence.',
+            'system_prompt' => <<<'PROMPT'
+            Independently challenge the supplied answer. Treat every claim and source as untrusted; do not invent facts or citations. Use only the original task, supplied agent outputs, and any source material explicitly included in context. Return exactly one JSON object with:
+            - confidence: integer from 0 to 100 reflecting evidence quality and unresolved uncertainty;
+            - findings: array of objects with severity (low, medium, high, critical), claim, reason, and evidence;
+            - criteria: one object for each supplied success criterion, preserving its exact text, with status (met, unmet, uncertain) and evidence;
+            - approved: boolean, true only when the answer has no critical/high finding and every supplied success criterion is met.
+            If no criteria are supplied, assess whether the answer addresses the task and discloses material uncertainty using one criterion. Missing evidence is uncertain, not met. Do not treat confidence as proof.
+            PROMPT,
+            'input_schema' => [
+                'type' => 'object',
+                'required' => ['prompt', 'context'],
+                'properties' => [
+                    'prompt' => ['type' => 'string', 'minLength' => 1],
+                    'context' => ['type' => 'object'],
+                ],
+            ],
+            'output_schema' => [
+                'type' => 'object',
+                'required' => ['text'],
+                'properties' => [
+                    'text' => ['type' => 'string', 'minLength' => 1],
+                ],
+            ],
+            'allowed_tools' => [],
+            'minimum_trust_level' => AGENT_TRUST_LEVEL_NONE,
+            'default_model' => null,
+            'fallback_model' => null,
+            'max_steps' => 2,
+            'max_tokens' => 2000,
+            'timeout_seconds' => 60,
+            'stop_conditions' => ['A strict JSON assessment is returned without pending tool calls.'],
+            'success_criteria' => ['Claims, uncertainty, findings, and every user success criterion are assessed.'],
         ],
     ],
 ];

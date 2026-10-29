@@ -5,6 +5,7 @@ use App\Http\Controllers\Api\AgentTrustController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\ProviderSettingsController;
 use App\Http\Controllers\Api\TaskController;
+use App\Http\Controllers\Api\TaskReplayShareController;
 use App\Http\Controllers\Api\ToolApprovalController;
 use App\Llm\ProviderCatalog;
 use Illuminate\Http\Request;
@@ -26,6 +27,11 @@ Route::get('/v1/info', function () {
         'providers' => array_keys(app(ProviderCatalog::class)->all()),
     ]);
 });
+
+Route::get('/v1/task-replays/{token}', [TaskReplayShareController::class, 'show'])
+    ->middleware('throttle:30,1')
+    ->where('token', '[A-Za-z0-9]{64}')
+    ->name('api.v1.task-replays.show');
 
 Route::prefix('/v1/auth')->name('api.v1.auth.')->group(function (): void {
     Route::post('/register', [AuthController::class, 'register'])
@@ -59,6 +65,18 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
     Route::get('/v1/tasks/{task}/replay', [TaskController::class, 'replay'])
         ->whereNumber('task')
         ->name('api.v1.tasks.replay');
+    Route::post('/v1/tasks/{task}/replay-shares', [TaskReplayShareController::class, 'store'])
+        ->middleware('throttle:10,1')
+        ->whereNumber('task')
+        ->name('api.v1.tasks.replay-shares.store');
+    Route::delete('/v1/tasks/{task}/replay-shares/{share}', [TaskReplayShareController::class, 'destroy'])
+        ->whereNumber('task')
+        ->whereNumber('share')
+        ->name('api.v1.tasks.replay-shares.destroy');
+    Route::post('/v1/tasks/{task}/replay/{agentRun}/resume', [TaskController::class, 'resumeFromRun'])
+        ->whereNumber('task')
+        ->whereNumber('agentRun')
+        ->name('api.v1.tasks.replay.resume');
     Route::post('/v1/tasks/{task}/transition-to-live', [TaskController::class, 'transitionToLive'])
         ->whereNumber('task')
         ->name('api.v1.tasks.transition-to-live');

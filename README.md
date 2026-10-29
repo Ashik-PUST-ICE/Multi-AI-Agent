@@ -27,7 +27,7 @@ Laravel API-first multi-agent workspace. The Milestone 1 web client submits task
    php artisan db:seed --class='Database\Seeders\AgentSpecSeeder'
    ```
 
-   The default seeder registers the `user` and `admin` roles and the `agent_specs.manage` permission. The agent-spec seeder registers the initial four versioned agent specifications.
+   The default seeder registers the `user` and `admin` roles and the `agent_specs.manage` permission. The agent-spec seeder registers the configured versioned agent specifications, including the Phase J Skeptic.
 
 3. Install frontend dependencies and build the client:
 
@@ -64,7 +64,7 @@ Paste the returned token into the dashboard's API token field. Never paste a tok
 
 ## Agent Trust Levels
 
-Each user controls their own agent trust levels on the Agents page. Orchestrator, Writer, and Reviewer start at level 0; Research starts at level 1 for read-only tools. Read tools require level 1, write tools level 2, outbound communication level 3, and sensitive actions level 4. A tool call below its declared minimum is blocked before either `simulate()` or `execute()` can run. Live calls at level 2 or above always require approval, in addition to any tool-specific approval rule. When an agent attempts a tool above its current level, the system records the violation and automatically lowers that agent's trust by one level, never below 0. User changes and automatic demotions are kept in per-user history.
+Each user controls their own agent trust levels on the Agents page. Orchestrator, Writer, Reviewer, and Skeptic start at level 0; Research starts at level 1 for read-only tools. Read tools require level 1, write tools level 2, outbound communication level 3, and sensitive actions level 4. A tool call below its declared minimum is blocked before either `simulate()` or `execute()` can run. Live calls at level 2 or above always require approval, in addition to any tool-specific approval rule. When an agent attempts a tool above its current level, the system records the violation and automatically lowers that agent's trust by one level, never below 0. User changes and automatic demotions are kept in per-user history.
 
 ## API endpoints
 
@@ -81,6 +81,10 @@ Each user controls their own agent trust levels on the Agents page. Orchestrator
 | `POST` | `/api/v1/tasks` | Create and queue a sandbox task |
 | `GET` | `/api/v1/tasks/{task}` | View task and agent-run status |
 | `GET` | `/api/v1/tasks/{task}/replay` | Read-only event replay in Sandbox mode |
+| `POST` | `/api/v1/tasks/{task}/replay/{agentRun}/resume` | Restart a completed/failed step as a new Sandbox task |
+| `POST` | `/api/v1/tasks/{task}/replay-shares` | Create an expiring read-only replay link (1–168 hours) |
+| `DELETE` | `/api/v1/tasks/{task}/replay-shares/{share}` | Revoke one of the task owner's replay links |
+| `GET` | `/api/v1/task-replays/{token}` | View the sanitized timeline for a valid share link |
 | `POST` | `/api/v1/tasks/{task}/transition-to-live` | Request a gated Sandbox-to-Live transition (currently fail-closed) |
 | `GET` | `/api/v1/approvals` | List the user's pending tool approvals |
 | `POST` | `/api/v1/approvals/{approval}/approve` | Approve the exact pending action |
@@ -91,13 +95,15 @@ Each user controls their own agent trust levels on the Agents page. Orchestrator
 | `POST` | `/api/v1/admin/agent-specs/{agentName}/versions/{version}/status` | Advance draft → test → active |
 | `POST` | `/api/v1/admin/agent-specs/{agentName}/versions/{version}/rollback` | Create a new draft from an earlier version |
 
-Task submission accepts `title` and `prompt`; any client-supplied `mode` is ignored and tasks start in Sandbox. Sandbox tools are routed to `simulate()` only, sandbox runs use the configured lower token ceiling, and when user-entered rates exist they use the least expensive approved model in a single currency. Messages and run events carry their execution mode. The Sandbox replay endpoint is owner-scoped, read-only, and never invokes tools or providers.
+Task submission accepts `title`, `prompt`, and optionally up to 10 distinct `success_criteria` strings (500 characters each); any client-supplied `mode` is ignored and tasks start in Sandbox. Sandbox tools are routed to `simulate()` only, sandbox runs use the configured lower token ceiling, and when user-entered rates exist they use the least expensive approved model in a single currency. Messages and run events carry their execution mode. The owner-scoped replay endpoint reads recorded events and sanitized messages only; it never invokes tools or providers. Restarting a completed or failed stage creates a new Sandbox task, uses current approved model settings and trust gates, and does not repeat Live actions. Share links are bearer links whose hashes are stored server-side; they expire within seven days, can be revoked by the owner, and expose a whitelisted event timeline only—not prompts, message content, or arbitrary event payloads. Provider cost in the timeline is computed from provider-reported/estimated token usage and the user's configured rates, and is not a billing statement.
 
-The explicit Live transition endpoint records user requests, but is currently fail-closed: a completed Sandbox task must have trusted `evaluation.passed` and `skeptic.approved` events, approved Live models, credentials, and enough Live token budget. Evaluation and Skeptic producers do not exist yet, so ordinary Sandbox tasks cannot currently transition. If those gates later pass, it creates a separate Live task; tool approvals and token limits continue to apply. No file, memory, or real-data connector is integrated, so Sandbox currently sees only the task prompt and simulated tool results; there is no real-data access toggle yet. Agent specs are mode-independent definitions, and agent packs are not implemented. Separate Sandbox/Live API keys are also not implemented.
+The explicit Live transition endpoint records user requests, but is currently fail-closed: a completed Sandbox task must have trusted `evaluation.passed` and `skeptic.approved` events, approved Live models, credentials, and enough Live token budget. Evaluation is not implemented, so ordinary Sandbox tasks cannot currently transition. If those gates later pass, it creates a separate Live task; tool approvals and token limits continue to apply. No file, memory, or real-data connector is integrated, so Sandbox currently sees only the task prompt and simulated tool results; there is no real-data access toggle yet. Agent specs are mode-independent definitions, and agent packs are not implemented. Separate Sandbox/Live API keys are also not implemented.
 
 Sensitive live tools require owner approval for the exact tool input; approval requests expire and are rejected when expired. Live web search remains disabled until its security adapter is implemented.
 
-The complexity router sends a request to one agent by default and selects the four-agent pipeline only for an explicitly combined request. The web client displays the route and budget estimate before requiring a second submit to start. Per-agent and per-task token ceilings are hard limits; estimated input that leaves no room for a response is rejected. Provider-reported usage is stored per agent run, with a conservative text-based estimate when a provider omits usage metadata.
+The complexity router sends a request to one agent by default and selects the multi-agent pipeline (Orchestrator, Research, Writer, Reviewer, Skeptic) only for an explicitly combined request. The web client displays the route and budget estimate before requiring a second submit to start. Per-agent and per-task token ceilings are hard limits; estimated input that leaves no room for a response is rejected. Provider-reported usage is stored per agent run, with a conservative text-based estimate when a provider omits usage metadata.
+
+The Skeptic independently assesses the Writer's response against the task and supplied success criteria. It must use a different user-approved, compatible model from both Writer's selected model and configured fallback; if no other compatible model has configured credentials, routing fails closed with a Settings error. Even when comparing Fixed routing, Skeptic uses the remaining approved models rather than reusing Writer's Fixed model. The criteria checker requires each criterion exactly once, marked `met` with evidence; missing or malformed assessments fail closed, and high/critical findings prevent approval. An unsuccessful assessment can trigger one bounded Writer → Reviewer → Skeptic retry, after which the task ends without approval if criteria remain unmet. Confidence is an estimate, not proof: 70% of the Skeptic score, plus 10 points per distinct Research HTTP(S) URL (capped at 30), minus 3/10/20/30 points per low/medium/high/critical finding, clamped to 0–100. The task view shows the score, criteria checklist, and findings.
 
 Users may optionally submit `model_pricing` entries with provider, model, currency, and input/output cost per million tokens to `PUT /api/v1/llm/settings`. Rates are accepted only for approved models. The estimate endpoint reports cost as unavailable when a selected model or configured fallback lacks a rate or route currencies differ; it never substitutes invented prices. Maximum estimates include one bounded fallback attempt at the same token ceiling.
 

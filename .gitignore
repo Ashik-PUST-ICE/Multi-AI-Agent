@@ -37,12 +37,16 @@ Homestead.yaml
 # Node.js
 /node_modules
 package-lock.json
+
+# Tests (only for running tests, not needed in repo)
+/tests
 composer.lock
 # Laravel public assets
 /public/build
 /public/hot
 /public/storage
 /public/uploads/
+
 
 # Language files
 /resources/lang/*.json

@@ -138,7 +138,7 @@ class AgentRunService
         }
 
         DB::transaction(function () use ($agentRunId, $exception): void {
-            $agentRun = AgentRun::with('task')->find($agentRunId);
+            $agentRun = AgentRun::with('task.user')->find($agentRunId);
 
             if ($agentRun === null || $agentRun->status === AGENT_RUN_STATUS_COMPLETED) {
                 return;
@@ -158,12 +158,65 @@ class AgentRunService
                     'error_message' => $exception->getMessage(),
                     'completed_at' => now(),
                 ]);
+                $agentRun->runEvents()->create([
+                    'task_id' => $task->id,
+                    'event_type' => 'task.failed',
+                    'mode' => $agentRun->mode,
+                    'sequence' => (int) $agentRun->runEvents()->max('sequence') + 1,
+                    'payload' => ['status' => TASK_STATUS_FAILED],
+                    'occurred_at' => now(),
+                ]);
             }
 
             $this->activityLogger->recordEvent($agentRun, 'agent.failed', [
                 'error' => $exception->getMessage(),
+                ...$this->failureUsageDetails($agentRun),
+                'duration_ms' => $agentRun->started_at === null
+                    ? null
+                    : max(0, $agentRun->started_at->diffInMilliseconds(now())),
             ]);
         });
+    }
+
+    /**
+     * @return array{provider: string|null, model: string|null, usage: array<string, mixed>, cost: array{amount: float, currency: string}|null}
+     */
+    private function failureUsageDetails(AgentRun $agentRun): array
+    {
+        $startEvent = $agentRun->runEvents()->where('event_type', 'agent.started')->oldest('id')->first();
+        $fallbackEvent = $agentRun->runEvents()->where('event_type', 'agent.model_fallback')->latest('id')->first();
+        $provider = $fallbackEvent?->payload['to_provider'] ?? $startEvent?->payload['provider'] ?? null;
+        $model = $fallbackEvent?->payload['to_model'] ?? $startEvent?->payload['model'] ?? null;
+        $usage = $agentRun->token_usage ?? [];
+
+        if (! is_string($provider) || ! is_string($model)) {
+            return ['provider' => null, 'model' => null, 'usage' => $usage, 'cost' => null];
+        }
+
+        $pricing = collect($agentRun->task?->user?->llmSettings?->model_pricing ?? [])
+            ->first(static fn (array $candidate): bool => (
+                ($candidate['provider'] ?? null) === $provider
+                && ($candidate['model'] ?? null) === $model
+            ));
+
+        if ($pricing === null) {
+            return ['provider' => $provider, 'model' => $model, 'usage' => $usage, 'cost' => null];
+        }
+
+        $amount = (
+            ((int) ($usage['input_tokens'] ?? 0) * (float) $pricing['input_cost_per_million'])
+            + ((int) ($usage['output_tokens'] ?? 0) * (float) $pricing['output_cost_per_million'])
+        ) / 1_000_000;
+
+        return [
+            'provider' => $provider,
+            'model' => $model,
+            'usage' => $usage,
+            'cost' => [
+                'amount' => round($amount, 8),
+                'currency' => $pricing['currency'],
+            ],
+        ];
     }
 
     private function requestToolApproval(

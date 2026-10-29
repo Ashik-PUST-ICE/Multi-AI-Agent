@@ -35,6 +35,7 @@ class OrchestratorService
         private readonly AgentRegistry $agentRegistry,
         private readonly ComplexityRouter $complexityRouter,
         private readonly TaskCostEstimator $taskCostEstimator,
+        private readonly SkepticAssessmentService $skepticAssessmentService,
     ) {}
 
     /**
@@ -43,6 +44,7 @@ class OrchestratorService
     public function submit(User $user, array $data): JsonResponse
     {
         $routing = $this->complexityRouter->route($data['prompt']);
+        $routing['agent_sequence'][] = 'Skeptic';
         $costEstimate = $this->taskCostEstimator->estimate(
             $user,
             $data['prompt'],
@@ -65,6 +67,8 @@ class OrchestratorService
                     'prompt' => $data['prompt'],
                     'routing' => $routing,
                     'cost_estimate' => $costEstimate,
+                    'success_criteria' => $data['success_criteria'] ?? [],
+                    'criteria_retry_count' => 0,
                 ],
                 'status' => TASK_STATUS_PENDING,
                 'mode' => TASK_MODE_SANDBOX,
@@ -119,6 +123,7 @@ class OrchestratorService
     public function estimate(User $user, string $prompt): JsonResponse
     {
         $routing = $this->complexityRouter->route($prompt);
+        $routing['agent_sequence'][] = 'Skeptic';
         $costEstimate = $this->taskCostEstimator->estimate(
             $user,
             $prompt,
@@ -169,19 +174,34 @@ class OrchestratorService
     {
         $task = $user->tasks()->findOrFail($taskId);
         Gate::forUser($user)->authorize('view', $task);
-        $events = $task->runEvents()
+        $eventModels = $task->runEvents()
             ->orderBy('occurred_at')
             ->orderBy('id')
+            ->get();
+        $messageIds = $eventModels
+            ->map(static fn ($event): mixed => $event->payload['message_id'] ?? null)
+            ->filter(static fn (mixed $messageId): bool => is_int($messageId) || ctype_digit((string) $messageId))
+            ->unique()
+            ->values();
+        $messages = $task->messages()
+            ->whereIn('id', $messageIds)
             ->get()
-            ->map(static fn ($event): array => [
-                'id' => $event->id,
-                'event_type' => $event->event_type,
-                'source_mode' => $event->mode,
-                'mode' => TASK_MODE_SANDBOX,
-                'sequence' => $event->sequence,
-                'payload' => $event->payload,
-                'occurred_at' => $event->occurred_at,
-            ])
+            ->keyBy('id');
+        $events = $eventModels
+            ->map(static function ($event) use ($messages): array {
+                $message = $messages->get($event->payload['message_id'] ?? null);
+
+                return [
+                    'id' => $event->id,
+                    'event_type' => $event->event_type,
+                    'source_mode' => $event->mode,
+                    'mode' => TASK_MODE_SANDBOX,
+                    'sequence' => $event->sequence,
+                    'payload' => $event->payload,
+                    'message' => $message?->only(['role', 'content', 'metadata']),
+                    'occurred_at' => $event->occurred_at,
+                ];
+            })
             ->all();
 
         return $this->success([
@@ -190,6 +210,103 @@ class OrchestratorService
             'read_only' => true,
             'events' => $events,
         ]);
+    }
+
+    public function resumeFromRun(User $user, int $taskId, int $agentRunId): JsonResponse
+    {
+        $sourceTask = $user->tasks()->findOrFail($taskId);
+        Gate::forUser($user)->authorize('view', $sourceTask);
+        $sourceRun = $sourceTask->agentRuns()->findOrFail($agentRunId);
+
+        if (! in_array($sourceRun->status, [AGENT_RUN_STATUS_COMPLETED, AGENT_RUN_STATUS_FAILED], true)) {
+            return $this->error('Only a completed or failed agent step can be restarted.', 409);
+        }
+
+        $sourceInput = $sourceRun->input ?? [];
+        if (array_key_exists('schema_version', $sourceInput)) {
+            $sourceEnvelope = AgentMessageEnvelope::fromArray($sourceInput);
+        } else {
+            $recordedPrompt = $sourceInput['prompt'] ?? null;
+            $recordedContext = $sourceInput['context'] ?? [];
+            if (! is_string($recordedPrompt) || ! is_array($recordedContext)) {
+                throw new RuntimeException('The recorded agent input cannot be replayed.');
+            }
+
+            $sourceEnvelope = new AgentMessageEnvelope(
+                'task',
+                $sourceRun->agent_name,
+                $sourceTask->id,
+                'task.input',
+                ['prompt' => $recordedPrompt, 'context' => $recordedContext],
+            );
+        }
+        $prompt = $sourceEnvelope->payload['prompt'] ?? null;
+        $context = $sourceEnvelope->payload['context'] ?? [];
+
+        if (! is_string($prompt) || ! is_array($context)) {
+            throw new RuntimeException('The recorded agent input cannot be replayed.');
+        }
+
+        $agentName = $sourceRun->agent_name;
+        $routing = [
+            'strategy' => 'single_agent',
+            'agent_sequence' => [$agentName],
+            'reason' => 'Restarted from a recorded step in a new Sandbox task.',
+        ];
+
+        $resumedTask = DB::transaction(function () use ($user, $sourceTask, $sourceRun, $sourceEnvelope, $agentName, $prompt, $context, $routing): Task {
+            $task = $user->tasks()->create([
+                'title' => "Replay: {$sourceTask->title}",
+                'description' => $prompt,
+                'input' => [
+                    'prompt' => $prompt,
+                    'routing' => $routing,
+                    'replay_source' => [
+                        'task_id' => $sourceTask->id,
+                        'agent_run_id' => $sourceRun->id,
+                    ],
+                ],
+                'status' => TASK_STATUS_PENDING,
+                'mode' => TASK_MODE_SANDBOX,
+            ]);
+            $agentRun = $task->agentRuns()->create([
+                'agent_name' => $agentName,
+                'mode' => TASK_MODE_SANDBOX,
+                'input' => (new AgentMessageEnvelope(
+                    $sourceEnvelope->from,
+                    $agentName,
+                    $task->id,
+                    'task.replay',
+                    ['prompt' => $prompt, 'context' => $context],
+                ))->toArray(),
+                'status' => AGENT_RUN_STATUS_PENDING,
+            ]);
+            $task->runEvents()->create([
+                'agent_run_id' => $agentRun->id,
+                'event_type' => 'task.replay_started',
+                'mode' => TASK_MODE_SANDBOX,
+                'sequence' => 1,
+                'payload' => [
+                    'source_task_id' => $sourceTask->id,
+                    'source_agent_run_id' => $sourceRun->id,
+                    'agent_name' => $agentName,
+                ],
+                'occurred_at' => now(),
+            ]);
+
+            RunAgentJob::dispatch(
+                $agentRun->id,
+                $this->agentRegistry->timeoutSeconds($agentRun->agent_name),
+            )->afterCommit();
+
+            return $task;
+        });
+
+        return $this->success(
+            ['task' => $this->taskData($resumedTask)],
+            CREATED_SUCCESSFULLY,
+            202,
+        );
     }
 
     public function index(User $user): JsonResponse
@@ -231,15 +348,75 @@ class OrchestratorService
                 'error_message' => null,
             ]);
 
-            $nextAgentName = $this->nextAgentName($task, $agentRun->agent_name);
+            $completedRuns = $task->agentRuns()->orderBy('id')->get();
+            if ($agentRun->agent_name === 'Skeptic') {
+                $agentOutputs = [];
+                foreach ($completedRuns as $completedRun) {
+                    $agentOutputs[$completedRun->agent_name] = $completedRun->output ?? [];
+                }
+
+                $taskInput = $task->input ?? [];
+                $assessment = $this->skepticAssessmentService->assess(
+                    (string) ($output['text'] ?? ''),
+                    $taskInput['success_criteria'] ?? [],
+                    $agentOutputs,
+                );
+                $taskInput['criteria_assessment'] = $assessment;
+                $task->forceFill(['input' => $taskInput])->save();
+                $this->recordTaskEvent($agentRun, $task, 'skeptic.assessment', $assessment);
+                $this->recordTaskEvent(
+                    $agentRun,
+                    $task,
+                    $assessment['approved'] ? 'skeptic.approved' : 'skeptic.rejected',
+                    [
+                        'approved' => $assessment['approved'],
+                        'criteria_passed' => $assessment['criteria_passed'],
+                        'confidence' => $assessment['confidence'],
+                        'findings' => $assessment['findings'],
+                    ],
+                );
+                $this->recordTaskEvent(
+                    $agentRun,
+                    $task,
+                    $assessment['criteria_passed'] ? 'evaluation.passed' : 'evaluation.failed',
+                    ['checklist' => $assessment['checklist']],
+                );
+
+                $retryCount = (int) ($taskInput['criteria_retry_count'] ?? 0);
+                if (! $assessment['approved'] && $retryCount < 1) {
+                    $routing = $taskInput['routing'] ?? [];
+                    $routing['agent_sequence'] = [
+                        ...$this->agentSequence($task),
+                        'Writer',
+                        'Reviewer',
+                        'Skeptic',
+                    ];
+                    $taskInput['routing'] = $routing;
+                    $taskInput['criteria_retry_count'] = $retryCount + 1;
+                    $task->forceFill(['input' => $taskInput])->save();
+                }
+            }
+
+            $nextAgentName = $this->nextAgentName($task, $agentRun);
 
             if ($nextAgentName === null) {
                 $completedRuns = $task->agentRuns()->orderBy('id')->get();
                 $task->update([
                     'status' => TASK_STATUS_COMPLETED,
-                    'result' => $this->buildTaskResult($completedRuns),
+                    'result' => $this->buildTaskResult(
+                        $completedRuns,
+                        $task->input['criteria_assessment'] ?? null,
+                    ),
                     'completed_at' => now(),
                     'error_message' => null,
+                ]);
+                $agentRun->runEvents()->create([
+                    'task_id' => $task->id,
+                    'event_type' => 'task.completed',
+                    'mode' => $task->mode,
+                    'sequence' => (int) $agentRun->runEvents()->max('sequence') + 1,
+                    'payload' => ['status' => TASK_STATUS_COMPLETED],
+                    'occurred_at' => now(),
                 ]);
 
                 return;
@@ -260,6 +437,19 @@ class OrchestratorService
                 'input' => $nextInput,
                 'status' => AGENT_RUN_STATUS_PENDING,
             ]);
+            $agentRun->runEvents()->create([
+                'task_id' => $task->id,
+                'event_type' => 'agent.handoff',
+                'mode' => $task->mode,
+                'sequence' => (int) $agentRun->runEvents()->max('sequence') + 1,
+                'payload' => [
+                    'from_agent' => $agentRun->agent_name,
+                    'to_agent' => $nextAgentName,
+                    'next_agent_run_id' => $nextAgentRun->id,
+                    'reason' => 'The current stage completed and passed its output to the next routed agent.',
+                ],
+                'occurred_at' => now(),
+            ]);
 
             RunAgentJob::dispatch(
                 $nextAgentRun->id,
@@ -268,13 +458,38 @@ class OrchestratorService
         });
     }
 
-    private function nextAgentName(Task $task, string $currentAgentName): ?string
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    private function recordTaskEvent(AgentRun $agentRun, Task $task, string $eventType, array $payload): void
+    {
+        $agentRun->runEvents()->create([
+            'task_id' => $task->id,
+            'event_type' => $eventType,
+            'mode' => $task->mode,
+            'sequence' => (int) $agentRun->runEvents()->max('sequence') + 1,
+            'payload' => $payload,
+            'occurred_at' => now(),
+        ]);
+    }
+
+    private function nextAgentName(Task $task, AgentRun $currentRun): ?string
     {
         $agentSequence = $this->agentSequence($task);
-        $currentIndex = array_search($currentAgentName, $agentSequence, true);
+        $occurrence = $task->agentRuns()
+            ->where('agent_name', $currentRun->agent_name)
+            ->where('id', '<', $currentRun->id)
+            ->count();
+        $matchingIndexes = [];
+        foreach ($agentSequence as $index => $agentName) {
+            if ($agentName === $currentRun->agent_name) {
+                $matchingIndexes[] = $index;
+            }
+        }
+        $currentIndex = $matchingIndexes[$occurrence] ?? false;
 
         if ($currentIndex === false) {
-            throw new InvalidArgumentException("Agent [{$currentAgentName}] is not in the task execution route.");
+            throw new InvalidArgumentException("Agent [{$currentRun->agent_name}] is not in the task execution route.");
         }
 
         $nextIndex = $currentIndex + 1;
@@ -316,11 +531,21 @@ class OrchestratorService
             'Writer' => [
                 'orchestration_plan' => $outputs['Orchestrator']['text'] ?? '',
                 'research' => $outputs['Research']['text'] ?? '',
+                'success_criteria' => $task->input['success_criteria'] ?? [],
+                'skeptic_feedback' => $outputs['Skeptic']['text'] ?? null,
             ],
             'Reviewer' => [
                 'original_task' => $prompt,
                 'research' => $outputs['Research']['text'] ?? '',
                 'draft' => $outputs['Writer']['text'] ?? '',
+            ],
+            'Skeptic' => [
+                'original_task' => $prompt,
+                'success_criteria' => $task->input['success_criteria'] ?? [],
+                'plan' => $outputs['Orchestrator']['text'] ?? '',
+                'research' => $outputs['Research']['text'] ?? '',
+                'draft' => $outputs['Writer']['text'] ?? $outputs[$agentName]['text'] ?? '',
+                'review' => $outputs['Reviewer']['text'] ?? '',
             ],
             default => throw new InvalidArgumentException("Agent [{$agentName}] cannot be dispatched by the orchestrator."),
         };
@@ -335,7 +560,7 @@ class OrchestratorService
      * @param  Collection<int, AgentRun>  $completedRuns
      * @return array<string, mixed>
      */
-    private function buildTaskResult(Collection $completedRuns): array
+    private function buildTaskResult(Collection $completedRuns, ?array $assessment = null): array
     {
         $agentOutputs = [];
 
@@ -348,10 +573,19 @@ class OrchestratorService
             : '';
 
         return [
-            'answer' => $agentOutputs['Writer']['text'] ?? $singleAgentAnswer,
+            'answer' => $agentOutputs['Writer']['text']
+                ?? $agentOutputs['Research']['text']
+                ?? $agentOutputs['Reviewer']['text']
+                ?? $agentOutputs['Orchestrator']['text']
+                ?? $singleAgentAnswer,
             'plan' => $agentOutputs['Orchestrator']['text'] ?? '',
             'research' => $agentOutputs['Research'] ?? [],
             'review' => $agentOutputs['Reviewer'] ?? [],
+            'skeptic' => $agentOutputs['Skeptic'] ?? [],
+            'confidence' => $assessment['confidence'] ?? null,
+            'success_criteria' => $assessment['checklist'] ?? [],
+            'skeptic_findings' => $assessment['findings'] ?? [],
+            'criteria_passed' => $assessment['criteria_passed'] ?? null,
         ];
     }
 
@@ -397,6 +631,16 @@ class OrchestratorService
                     'mode' => $event->mode,
                     'payload' => $event->payload,
                     'occurred_at' => $event->occurred_at,
+                ])
+                ->all();
+            $taskData['replay_shares'] = $task->replayShares()
+                ->whereNull('revoked_at')
+                ->where('expires_at', '>', now())
+                ->orderByDesc('id')
+                ->get(['id', 'expires_at'])
+                ->map(static fn ($share): array => [
+                    'id' => $share->id,
+                    'expires_at' => $share->expires_at,
                 ])
                 ->all();
         }

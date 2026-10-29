@@ -266,6 +266,9 @@ function renderAgentRuns(agentRuns = [], routing = null) {
         const extra = outputText || errorMessage
             ? `<p class="stage-output">${escapeHtml(outputText || errorMessage)}</p>`
             : '';
+        const replayAction = agentRun && [2, 3].includes(agentRun.status)
+            ? `<button class="button button-quiet button-small" type="button" data-resume-agent-run-id="${escapeHtml(agentRun.id)}">এই ধাপটি Sandbox-এ আবার চালান</button>`
+            : '';
 
         return `
             <div class="agent-stage status-${escapeHtml(status)}">
@@ -273,6 +276,7 @@ function renderAgentRuns(agentRuns = [], routing = null) {
                 <span class="stage-name">${escapeHtml(agentName)}</span>
                 <span class="status-chip status-${escapeHtml(status)}">${escapeHtml(statusLabel(status))}</span>
                 ${extra}
+                ${replayAction}
             </div>
         `;
     }).join('');
@@ -294,6 +298,25 @@ function renderTaskDetail(task) {
     const usageSummary = tokenUsage > 0
         ? `<p class="usage-summary">Token usage: ${escapeHtml(tokenUsage.toLocaleString())}</p>`
         : '';
+    const confidence = task.result?.confidence;
+    const confidenceSummary = Number.isInteger(confidence?.score)
+        ? `<section class="confidence-card"><strong>Confidence: ${escapeHtml(confidence.score)}%</strong><span>${escapeHtml(confidence.rationale)}</span><span>চিহ্নিত উৎস: ${escapeHtml(confidence.source_count)}</span></section>`
+        : '';
+    const criteriaChecklist = (task.result?.success_criteria || []).map((item) => `
+        <li class="criteria-${escapeHtml(item.status)}">
+            <strong>${item.status === 'met' ? '✓' : item.status === 'unmet' ? '✕' : '?'}</strong>
+            <span>${escapeHtml(item.criterion)}<small>${escapeHtml(item.evidence || 'প্রমাণ অনুপস্থিত')}</small></span>
+        </li>
+    `).join('');
+    const criteriaPanel = criteriaChecklist
+        ? `<section class="criteria-card"><strong>সাফল্যের শর্ত ${task.result?.criteria_passed ? 'পাস' : 'পাস হয়নি'}</strong><ul>${criteriaChecklist}</ul></section>`
+        : '';
+    const skepticFindings = (task.result?.skeptic_findings || []).map((finding) => `
+        <li><span class="status-chip">${escapeHtml(finding.severity)}</span><strong>${escapeHtml(finding.claim)}</strong><span>${escapeHtml(finding.reason)}</span></li>
+    `).join('');
+    const findingsPanel = skepticFindings
+        ? `<section class="criteria-card"><strong>Skeptic-এর পর্যবেক্ষণ</strong><ul>${skepticFindings}</ul></section>`
+        : '';
     const routingDetails = (task.routing_events || []).map((routingEvent) => {
         const routing = routingEvent.payload?.routing;
         if (routingEvent.event_type === 'agent.model_fallback') {
@@ -301,9 +324,19 @@ function renderTaskDetail(task) {
         }
         return `<div class="replay-event"><strong>${escapeHtml(routingEvent.payload.agent)} · ${escapeHtml(routingEvent.payload.model || 'model')}</strong> · ${escapeHtml(routing?.brain_mode || 'Auto')} / ${escapeHtml(routing?.policy || 'policy')} · ${escapeHtml(routing?.reason || 'Routing reason unavailable')} · ${escapeHtml(routingEvent.mode)}</div>`;
     }).join('');
+    const activeShareRows = (task.replay_shares || []).map((share) => `
+        <div class="replay-share-entry" data-replay-share-entry="${escapeHtml(share.id)}">
+            <span>মেয়াদ শেষ: ${escapeHtml(formatDate(share.expires_at))}</span>
+            <button class="button button-quiet button-small" type="button" data-revoke-replay-share-id="${escapeHtml(share.id)}" data-task-id="${escapeHtml(task.id)}">বাতিল</button>
+        </div>
+    `).join('');
+    const sharePanel = activeShareRows
+        ? `<section class="panel" data-replay-share-panel><strong>সক্রিয় replay link</strong><div data-replay-share-list>${activeShareRows}</div></section>`
+        : '';
     const taskMode = task.mode === 'live' ? 'live' : 'sandbox';
     const modeActions = [
         `<button class="button button-quiet button-small" type="button" data-replay-task-id="${escapeHtml(task.id)}">Sandbox replay (read only)</button>`,
+        `<button class="button button-quiet button-small" type="button" data-share-task-replay-id="${escapeHtml(task.id)}">Read-only share link তৈরি</button>`,
     ];
 
     if (taskMode === 'sandbox' && task.status === 2) {
@@ -324,7 +357,11 @@ function renderTaskDetail(task) {
         <div class="task-mode-actions">${modeActions.join('')}</div>
         <div class="agent-timeline">${renderAgentRuns(task.agent_runs || [], task.routing)}</div>
         ${routingDetails ? `<section class="routing-reasons"><strong>কেন এই model</strong>${routingDetails}</section>` : ''}
+        ${sharePanel}
         ${usageSummary}
+        ${confidenceSummary}
+        ${criteriaPanel}
+        ${findingsPanel}
         ${finalResult}
         ${failureMessage}
     `;
@@ -333,13 +370,23 @@ function renderTaskDetail(task) {
 async function loadSandboxReplay(taskId) {
     const responseData = await apiRequest(`/tasks/${encodeURIComponent(taskId)}/replay`);
     const eventRows = responseData.events.length > 0
-        ? responseData.events.map((event) => `
-            <div class="replay-event">
-                <strong>${escapeHtml(event.event_type)}</strong>
-                · ${escapeHtml(event.source_mode)} → ${escapeHtml(event.mode)}
-                · ${escapeHtml(formatDate(event.occurred_at))}
-            </div>
-        `).join('')
+        ? responseData.events.map((event) => {
+            const details = event.payload && Object.keys(event.payload).length > 0
+                ? `<pre>${escapeHtml(JSON.stringify(event.payload, null, 2))}</pre>`
+                : '';
+            const message = event.message
+                ? `<details><summary>${escapeHtml(event.message.role)} message</summary><pre>${escapeHtml(event.message.content)}</pre></details>`
+                : '';
+            return `
+                <article class="replay-event">
+                    <strong>${escapeHtml(event.event_type)}</strong>
+                    · ${escapeHtml(event.source_mode)} → ${escapeHtml(event.mode)}
+                    · ${escapeHtml(formatDate(event.occurred_at))}
+                    ${details}
+                    ${message}
+                </article>
+            `;
+        }).join('')
         : '<div class="empty-state">এই কাজের জন্য কোনো replay event নেই।</div>';
 
     const existingReplay = elements.taskDetail.querySelector('[data-replay-events]');
@@ -350,7 +397,7 @@ async function loadSandboxReplay(taskId) {
     const replayPanel = document.createElement('section');
     replayPanel.className = 'panel';
     replayPanel.dataset.replayEvents = 'true';
-    replayPanel.innerHTML = `<strong>Sandbox replay · read only</strong>${eventRows}`;
+    replayPanel.innerHTML = `<strong>Sandbox replay · read only</strong><p>Replay শুধু সংরক্ষিত event দেখায়; কোনো tool বা provider চালায় না।</p>${eventRows}`;
     elements.taskDetail.append(replayPanel);
 }
 
@@ -1049,16 +1096,22 @@ elements.taskForm.addEventListener('submit', async (event) => {
     clearNotices();
     const submitButton = elements.taskForm.querySelector('button[type="submit"]');
     const formData = new FormData(elements.taskForm);
+    const successCriteria = String(formData.get('success_criteria') || '')
+        .split(/\r?\n/)
+        .map((criterion) => criterion.trim())
+        .filter(Boolean);
     const taskData = {
         title: String(formData.get('title') || '').trim(),
         prompt: String(formData.get('prompt') || '').trim(),
+        success_criteria: successCriteria,
     };
     submitButton.disabled = true;
 
     try {
         const isCurrentEstimateConfirmed = pendingTaskConfirmation
             && pendingTaskConfirmation.title === taskData.title
-            && pendingTaskConfirmation.prompt === taskData.prompt;
+            && pendingTaskConfirmation.prompt === taskData.prompt
+            && JSON.stringify(pendingTaskConfirmation.success_criteria) === JSON.stringify(taskData.success_criteria);
         if (!isCurrentEstimateConfirmed) {
             const estimateResponse = await apiRequest('/tasks/estimate', {
                 method: 'POST',
@@ -1151,11 +1204,97 @@ elements.taskList.addEventListener('click', async (event) => {
 
 elements.taskDetail.addEventListener('click', async (event) => {
     const replayButton = event.target.closest('[data-replay-task-id]');
+    const resumeButton = event.target.closest('[data-resume-agent-run-id]');
+    const shareButton = event.target.closest('[data-share-task-replay-id]');
+    const revokeShareButton = event.target.closest('[data-revoke-replay-share-id]');
+    const copyShareButton = event.target.closest('[data-copy-replay-share-url]');
     const transitionButton = event.target.closest('[data-live-transition-task-id]');
 
     try {
         if (replayButton) {
             await loadSandboxReplay(replayButton.dataset.replayTaskId);
+        }
+
+        if (resumeButton) {
+            const shouldResume = window.confirm(
+                'এই ধাপটি বর্তমান approved model ও trust level দিয়ে নতুন Sandbox task হিসেবে আবার চালাবেন? কোনো Live action পুনরায় হবে না.',
+            );
+            if (!shouldResume) {
+                return;
+            }
+
+            resumeButton.disabled = true;
+            const responseData = await apiRequest(
+                `/tasks/${encodeURIComponent(selectedTaskId)}/replay/${encodeURIComponent(resumeButton.dataset.resumeAgentRunId)}/resume`,
+                { method: 'POST', body: JSON.stringify({}) },
+            );
+            selectedTaskId = responseData.task.id;
+            await loadTasks();
+            showNotice(elements.success, 'ধাপটি নতুন Sandbox task হিসেবে queue হয়েছে।');
+        }
+
+        if (shareButton) {
+            shareButton.disabled = true;
+            const responseData = await apiRequest(
+                `/tasks/${encodeURIComponent(shareButton.dataset.shareTaskReplayId)}/replay-shares`,
+                {
+                    method: 'POST',
+                    body: JSON.stringify({ expires_in_hours: 24 }),
+                },
+            );
+            let sharePanel = elements.taskDetail.querySelector('[data-replay-share-panel]');
+            if (!sharePanel) {
+                sharePanel = document.createElement('section');
+                sharePanel.className = 'panel replay-share-panel';
+                sharePanel.dataset.replaySharePanel = 'true';
+                sharePanel.innerHTML = '<strong>সক্রিয় replay link</strong><div data-replay-share-list></div>';
+                elements.taskDetail.append(sharePanel);
+            }
+            const shareEntry = document.createElement('div');
+            shareEntry.className = 'replay-share-entry';
+            shareEntry.dataset.replayShareEntry = responseData.share.id;
+            const shareLink = document.createElement('a');
+            shareLink.href = responseData.share.url;
+            shareLink.textContent = responseData.share.url;
+            shareLink.target = '_blank';
+            shareLink.rel = 'noopener noreferrer';
+            const expiresAt = document.createElement('p');
+            expiresAt.textContent = `মেয়াদ শেষ: ${formatDate(responseData.share.expires_at)}`;
+            const shareScope = document.createElement('p');
+            shareScope.textContent = 'এই link-এ শুধু sanitized event timeline দেখা যাবে; prompt ও message content থাকবে না।';
+            const copyButton = document.createElement('button');
+            copyButton.className = 'button button-quiet button-small';
+            copyButton.type = 'button';
+            copyButton.textContent = 'লিংক কপি';
+            copyButton.dataset.copyReplayShareUrl = responseData.share.url;
+            const revokeButton = document.createElement('button');
+            revokeButton.className = 'button button-quiet button-small';
+            revokeButton.type = 'button';
+            revokeButton.textContent = 'লিংক বাতিল';
+            revokeButton.dataset.revokeReplayShareId = responseData.share.id;
+            revokeButton.dataset.taskId = shareButton.dataset.shareTaskReplayId;
+            shareEntry.append(shareLink, expiresAt, shareScope, copyButton, revokeButton);
+            sharePanel.querySelector('[data-replay-share-list]').append(shareEntry);
+        }
+
+        if (revokeShareButton) {
+            await apiRequest(
+                `/tasks/${encodeURIComponent(revokeShareButton.dataset.taskId)}/replay-shares/${encodeURIComponent(revokeShareButton.dataset.revokeReplayShareId)}`,
+                { method: 'DELETE' },
+            );
+            revokeShareButton.closest('[data-replay-share-entry]')?.remove();
+            if (!elements.taskDetail.querySelector('[data-replay-share-list]')?.children.length) {
+                elements.taskDetail.querySelector('[data-replay-share-panel]')?.remove();
+            }
+            showNotice(elements.success, 'Replay link বাতিল হয়েছে।');
+        }
+
+        if (copyShareButton) {
+            if (!navigator.clipboard?.writeText) {
+                throw new Error('এই browser-এ clipboard access পাওয়া যায়নি। লিংকটি নির্বাচন করে কপি করুন।');
+            }
+            await navigator.clipboard.writeText(copyShareButton.dataset.copyReplayShareUrl);
+            showNotice(elements.success, 'Replay link কপি হয়েছে।');
         }
 
         if (transitionButton) {

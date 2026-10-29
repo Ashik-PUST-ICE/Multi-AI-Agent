@@ -119,6 +119,8 @@
                         <input id="task-title" name="title" type="text" maxlength="255" placeholder="যেমন: একটি বিষয় নিয়ে গবেষণা" required>
                         <label for="task-prompt">কী করতে হবে?</label>
                         <textarea id="task-prompt" name="prompt" rows="5" maxlength="20000" placeholder="কাজটি বিস্তারিত লিখুন..." required></textarea>
+                        <label for="task-success-criteria">সাফল্যের শর্ত (প্রতি লাইনে একটি, ঐচ্ছিক)</label>
+                        <textarea id="task-success-criteria" name="success_criteria" rows="3" maxlength="5000" placeholder="যেমন: অন্তত ৩টি নির্ভরযোগ্য উৎস ব্যবহার করবে&#10;উত্তরটি বাংলায় দেবে"></textarea>
                         <div class="form-footer">
                             <span>কোনো live action চালানো হবে না।</span>
                             <button class="button button-primary" type="submit">কাজ জমা দিন <span aria-hidden="true">→</span></button>

@@ -49,6 +49,11 @@ class TaskController extends Controller
         return $this->orchestratorService->replay($request->user(), $task);
     }
 
+    public function resumeFromRun(Request $request, int $task, int $agentRun): JsonResponse
+    {
+        return $this->orchestratorService->resumeFromRun($request->user(), $task, $agentRun);
+    }
+
     public function transitionToLive(TransitionTaskModeRequest $request, int $task): JsonResponse
     {
         return $this->taskModeTransitionService->transitionToLive($request->user(), $task);
