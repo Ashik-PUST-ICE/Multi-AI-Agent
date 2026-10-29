@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\AgentTrustController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\KnowledgeController;
 use App\Http\Controllers\Api\KnowledgeSystemSettingsController;
+use App\Http\Controllers\Api\SecurityControlController;
 use App\Http\Controllers\Api\ProviderSettingsController;
 use App\Http\Controllers\Api\TaskController;
 use App\Http\Controllers\Api\TaskReplayShareController;
@@ -58,6 +59,7 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
             'user' => [
                 ...$request->user()->only(['id', 'name', 'email']),
                 'can_manage_knowledge_settings' => $request->user()->can('knowledge_settings.manage'),
+                'can_manage_security' => $request->user()->can('security.manage'),
             ],
         ]);
     });
@@ -127,6 +129,15 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
             Route::put('/', 'update')->name('update');
         });
 
+    Route::prefix('/v1/admin/security')
+        ->middleware('can:security.manage')
+        ->name('api.v1.admin.security.')
+        ->controller(SecurityControlController::class)
+        ->group(function (): void {
+            Route::get('/kill-switch', 'showSystemKillSwitch')->name('kill-switch.show');
+            Route::put('/kill-switch', 'updateSystemKillSwitch')->name('kill-switch.update');
+        });
+
     Route::post('/v1/tasks/estimate', [TaskController::class, 'estimate'])
         ->middleware('throttle:30,1')
         ->name('api.v1.tasks.estimate');
@@ -137,6 +148,13 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
     Route::get('/v1/tasks/{task}', [TaskController::class, 'show'])
         ->whereNumber('task')
         ->name('api.v1.tasks.show');
+    Route::post('/v1/tasks/{task}/kill-switch', [SecurityControlController::class, 'stopTask'])
+        ->whereNumber('task')
+        ->name('api.v1.tasks.kill-switch');
+    Route::post('/v1/tasks/{task}/agent-runs/{agentRun}/kill-switch', [SecurityControlController::class, 'stopAgentRun'])
+        ->whereNumber('task')
+        ->whereNumber('agentRun')
+        ->name('api.v1.tasks.agent-runs.kill-switch');
     Route::get('/v1/tasks/{task}/replay', [TaskController::class, 'replay'])
         ->whereNumber('task')
         ->name('api.v1.tasks.replay');

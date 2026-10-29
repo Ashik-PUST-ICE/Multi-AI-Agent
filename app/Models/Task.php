@@ -23,6 +23,7 @@ class Task extends Model
         'tenant_id',
         'title',
         'description',
+        'objective_sha256',
         'status',
         'mode',
         'input',
@@ -41,6 +42,13 @@ class Task extends Model
             'started_at' => 'datetime',
             'completed_at' => 'datetime',
         ];
+    }
+
+    protected static function booted(): void
+    {
+        static::creating(function (self $task): void {
+            $task->objective_sha256 ??= hash('sha256', (string) $task->description);
+        });
     }
 
     public function user(): BelongsTo

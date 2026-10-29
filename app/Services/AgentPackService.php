@@ -11,6 +11,7 @@ use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
+use RuntimeException;
 use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 
 class AgentPackService
@@ -97,6 +98,7 @@ class AgentPackService
         if ($pack === null) {
             throw new ModelNotFoundException('The requested agent pack is not available.');
         }
+        $this->assertDefinitionIntegrity($pack);
 
         $installed = UserAgentPack::query()
             ->where('user_id', $user->id)
@@ -142,6 +144,7 @@ class AgentPackService
             'name' => $data['name'],
             'description' => $data['description'],
             'definition' => $definition,
+            'definition_sha256' => $this->definitionHash($definition),
             'status' => AGENT_PACK_STATUS_DRAFT,
             'is_builtin' => false,
             'created_by' => $user->id,
@@ -179,6 +182,7 @@ class AgentPackService
                 'name' => $attributes['name'],
                 'description' => $attributes['description'],
                 'definition' => $definition,
+                'definition_sha256' => $this->definitionHash($definition),
                 'status' => AGENT_PACK_STATUS_DRAFT,
                 'is_builtin' => false,
                 'created_by' => $user->id,
@@ -214,10 +218,12 @@ class AgentPackService
                 'guidance' => $data['guidance'] ?? $guidance,
                 'examples' => $data['examples'] ?? $pack->definition['examples'],
             ];
+            $definition = $this->buildDefinition($attributes);
             $pack->update([
                 'name' => $attributes['name'],
                 'description' => $attributes['description'],
-                'definition' => $this->buildDefinition($attributes),
+                'definition' => $definition,
+                'definition_sha256' => $this->definitionHash($definition),
             ]);
 
             return $pack->refresh();
@@ -283,6 +289,7 @@ class AgentPackService
                     'name' => $attributes['name'],
                     'description' => $attributes['description'],
                     'definition' => $definition,
+                    'definition_sha256' => $this->definitionHash($definition),
                     'status' => AGENT_PACK_STATUS_ACTIVE,
                     'is_builtin' => true,
                 ],
@@ -343,6 +350,8 @@ class AgentPackService
      */
     private function packData(AgentPack $pack): array
     {
+        $this->assertDefinitionIntegrity($pack);
+
         return [
             'slug' => $pack->slug,
             'version' => $pack->version,
@@ -354,5 +363,21 @@ class AgentPackService
             'profiles' => $pack->definition['profiles'] ?? [],
             'examples' => $pack->definition['examples'] ?? [],
         ];
+    }
+
+    private function definitionHash(array $definition): string
+    {
+        return hash(
+            'sha256',
+            json_encode($definition, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        );
+    }
+
+    private function assertDefinitionIntegrity(AgentPack $pack): void
+    {
+        $expectedHash = $this->definitionHash($pack->definition ?? []);
+        if (! is_string($pack->definition_sha256) || ! hash_equals($pack->definition_sha256, $expectedHash)) {
+            throw new RuntimeException("Agent pack [{$pack->slug}] failed its definition integrity check.");
+        }
     }
 }

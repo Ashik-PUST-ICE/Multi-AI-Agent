@@ -425,31 +425,90 @@ class KnowledgeService
             ])->all();
     }
 
-    public function createMemory(User $user, int $type, ?string $label, string $content, ?int $expiresInDays): JsonResponse
-    {
+    public function createMemory(
+        User $user,
+        int $type,
+        ?string $label,
+        string $content,
+        ?int $expiresInDays,
+        int $scopeType = USER_MEMORY_SCOPE_USER,
+        ?int $taskId = null,
+    ): JsonResponse {
+        if ($scopeType === USER_MEMORY_SCOPE_TASK) {
+            $user->tasks()->findOrFail($taskId);
+        } elseif ($scopeType !== USER_MEMORY_SCOPE_USER || $taskId !== null) {
+            throw ValidationException::withMessages(['scope_type' => 'The requested memory scope is not available.']);
+        }
+
         $expiresAt = $type === USER_MEMORY_TYPE_SHORT_TERM && $expiresInDays !== null
             ? now()->addDays($expiresInDays)
             : null;
-        $memory = $user->memories()->create([
-            'type' => $type,
-            'label' => $label,
-            'content' => $content,
-            'expires_at' => $expiresAt,
-        ]);
+        $memory = DB::transaction(function () use ($user, $type, $label, $content, $expiresAt, $scopeType, $taskId): UserMemory {
+            $memory = $user->memories()->create([
+                'scope_type' => $scopeType,
+                'task_id' => $scopeType === USER_MEMORY_SCOPE_TASK ? $taskId : null,
+                'status' => USER_MEMORY_STATUS_ACTIVE,
+                'created_by_user_id' => $user->id,
+                'source_type' => USER_MEMORY_SOURCE_USER_INPUT,
+                'type' => $type,
+                'label' => $label,
+                'content' => trim($content),
+                'expires_at' => $expiresAt,
+            ]);
+
+            if (is_string($label) && trim($label) !== '') {
+                $previousMemories = $user->memories()
+                    ->where('scope_type', $scopeType)
+                    ->where('task_id', $scopeType === USER_MEMORY_SCOPE_TASK ? $taskId : null)
+                    ->where('status', USER_MEMORY_STATUS_ACTIVE)
+                    ->whereRaw('LOWER(label) = ?', [mb_strtolower(trim($label))])
+                    ->where('id', '<>', $memory->id)
+                    ->lockForUpdate()
+                    ->get();
+
+                foreach ($previousMemories as $previousMemory) {
+                    $previousMemory->update([
+                        'status' => USER_MEMORY_STATUS_SUPERSEDED,
+                        'superseded_by_id' => $memory->id,
+                    ]);
+                }
+            }
+
+            return $memory;
+        });
 
         return $this->success(['memory' => $this->memoryData($memory)], CREATED_SUCCESSFULLY, 201);
     }
 
-    public function memories(User $user): JsonResponse
+    public function memories(User $user, ?int $taskId = null): JsonResponse
     {
-        $user->memories()
-            ->where('type', USER_MEMORY_TYPE_SHORT_TERM)
-            ->whereNotNull('expires_at')
-            ->where('expires_at', '<=', now())
-            ->delete();
+        $query = $user->memories();
+        if ($taskId !== null) {
+            $user->tasks()->findOrFail($taskId);
+            $query->where(function ($scope) use ($taskId): void {
+                $scope->where(function ($personal): void {
+                    $personal->where('scope_type', USER_MEMORY_SCOPE_USER)
+                        ->whereNull('task_id');
+                })->orWhere(function ($taskScope) use ($taskId): void {
+                    $taskScope->where('scope_type', USER_MEMORY_SCOPE_TASK)
+                        ->where('task_id', $taskId);
+                });
+            });
+        } else {
+            $query->where('scope_type', USER_MEMORY_SCOPE_USER)->whereNull('task_id');
+        }
+        $query->where(function ($visibility): void {
+            $visibility->where('status', USER_MEMORY_STATUS_SUPERSEDED)
+                ->orWhere(function ($active): void {
+                    $active->where('status', USER_MEMORY_STATUS_ACTIVE)
+                        ->where(function ($expiry): void {
+                            $expiry->whereNull('expires_at')->orWhere('expires_at', '>', now());
+                        });
+                });
+        });
 
         return $this->success([
-            'memories' => $user->memories()
+            'memories' => $query
                 ->latest('id')
                 ->get()
                 ->map(fn (UserMemory $memory): array => $this->memoryData($memory))
@@ -459,9 +518,65 @@ class KnowledgeService
 
     public function deleteMemory(User $user, int $memoryId): JsonResponse
     {
-        $user->memories()->findOrFail($memoryId)->delete();
+        $memory = $user->memories()->findOrFail($memoryId);
+        if ($memory->status !== USER_MEMORY_STATUS_ACTIVE) {
+            throw ValidationException::withMessages(['memory' => 'Only active memories can be deleted.']);
+        }
+        $memory->delete();
 
         return $this->success(['id' => $memoryId], DELETED_SUCCESSFULLY);
+    }
+
+    /**
+     * @param  list<int>  $memoryIds
+     * @return list<array<string, mixed>>
+     */
+    public function selectedMemoryContext(User $user, array $memoryIds): array
+    {
+        if ($memoryIds === []) {
+            return [];
+        }
+
+        $memories = $user->memories()
+            ->where('scope_type', USER_MEMORY_SCOPE_USER)
+            ->whereNull('task_id')
+            ->where('status', USER_MEMORY_STATUS_ACTIVE)
+            ->where(function ($query): void {
+                $query->whereNull('expires_at')->orWhere('expires_at', '>', now());
+            })
+            ->whereIn('id', $memoryIds)
+            ->orderBy('id')
+            ->get();
+
+        if ($memories->count() !== count(array_unique($memoryIds))) {
+            throw ValidationException::withMessages([
+                'memory_ids' => 'One or more selected memories are unavailable, expired, or outside your personal scope.',
+            ]);
+        }
+
+        $context = $memories->map(static fn (UserMemory $memory): array => [
+            'memory_id' => $memory->id,
+            'label' => $memory->label,
+            'content' => $memory->content,
+            'source' => 'user_memory',
+            'created_at' => $memory->created_at?->toIso8601String(),
+        ])->all();
+
+        if (mb_strlen(json_encode($context, JSON_THROW_ON_ERROR)) > 10000) {
+            throw ValidationException::withMessages([
+                'memory_ids' => 'Selected memories exceed the maximum task context size.',
+            ]);
+        }
+
+        return $context;
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $context
+     */
+    public function memoryContextHash(array $context): string
+    {
+        return hash('sha256', json_encode($context, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
     }
 
     /**
@@ -544,6 +659,24 @@ class KnowledgeService
      */
     private function memoryData(UserMemory $memory): array
     {
-        return $memory->only(['id', 'type', 'label', 'content', 'expires_at', 'created_at']);
+        $data = $memory->only([
+            'id',
+            'scope_type',
+            'task_id',
+            'type',
+            'label',
+            'content',
+            'status',
+            'created_by_user_id',
+            'source_type',
+            'superseded_by_id',
+            'expires_at',
+            'created_at',
+        ]);
+        $data['expired'] = $memory->status === USER_MEMORY_STATUS_ACTIVE
+            && $memory->expires_at !== null
+            && $memory->expires_at->isPast();
+
+        return $data;
     }
 }

@@ -30,6 +30,9 @@ class CreateTaskRequest extends FormRequest
             'knowledge_document_ids' => ['sometimes', 'array', 'max:100'],
             'knowledge_document_ids.*' => ['required', 'integer', 'min:1', 'distinct'],
             'knowledge_context_token' => ['sometimes', 'nullable', 'string', 'size:64', 'alpha_num'],
+            'memory_ids' => ['sometimes', 'array', 'max:10'],
+            'memory_ids.*' => ['required', 'integer', 'min:1', 'distinct'],
+            'memory_context_hash' => ['sometimes', 'nullable', 'string', 'size:64', 'regex:/^[a-f0-9]{64}$/'],
         ];
     }
 }

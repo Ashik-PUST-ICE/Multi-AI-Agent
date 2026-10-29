@@ -22,6 +22,8 @@ class EstimateTaskRequest extends FormRequest
             'agent_pack' => ['sometimes', 'nullable', 'string', 'max:64', 'regex:/^[a-z0-9]+(?:-[a-z0-9]+)*$/'],
             'knowledge_document_ids' => ['sometimes', 'array', 'max:100'],
             'knowledge_document_ids.*' => ['required', 'integer', 'min:1', 'distinct'],
+            'memory_ids' => ['sometimes', 'array', 'max:10'],
+            'memory_ids.*' => ['required', 'integer', 'min:1', 'distinct'],
         ];
     }
 }

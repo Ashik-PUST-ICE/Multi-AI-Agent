@@ -47,5 +47,10 @@ class DatabaseSeeder extends Seeder
             ['display_name' => 'Manage Knowledge processing settings', 'module' => 1],
         );
         $adminRole->givePermissionTo($knowledgeSettingsPermission);
+        $securityPermission = Permission::query()->firstOrCreate(
+            ['name' => 'security.manage', 'guard_name' => 'web'],
+            ['display_name' => 'Manage system security controls', 'module' => 1],
+        );
+        $adminRole->givePermissionTo($securityPermission);
     }
 }

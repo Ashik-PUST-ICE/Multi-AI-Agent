@@ -7,6 +7,7 @@ const STATUS_LABELS = {
     1: 'চলছে',
     2: 'সম্পন্ন',
     3: 'ব্যর্থ',
+    4: 'বন্ধ করা হয়েছে',
 };
 const AGENT_SEQUENCE = ['Orchestrator', 'Research', 'Writer', 'Reviewer'];
 const AGENT_PACK_STATUS = { DRAFT: 0, ACTIVE: 1, RETIRED: 2 };
@@ -49,9 +50,12 @@ const elements = {
     embeddingSettingsStatus: document.querySelector('#embedding-settings-status'),
     knowledgeAdminSettings: document.querySelector('#knowledge-admin-settings'),
     knowledgeAdminSettingsForm: document.querySelector('#knowledge-admin-settings-form'),
+    securityAdmin: document.querySelector('#security-admin'),
+    systemKillSwitchButton: document.querySelector('#system-kill-switch-button'),
     knowledgeUploadForm: document.querySelector('#knowledge-upload-form'),
     knowledgeDocumentList: document.querySelector('#knowledge-document-list'),
     taskKnowledgeDocuments: document.querySelector('#task-knowledge-documents'),
+    taskMemoryChoices: document.querySelector('#task-memory-choices'),
     knowledgeSearchForm: document.querySelector('#knowledge-search-form'),
     knowledgeSearchResults: document.querySelector('#knowledge-search-results'),
     memoryForm: document.querySelector('#memory-form'),
@@ -98,6 +102,8 @@ let editingAgentPack = null;
 let embeddingCatalog = {};
 let knowledgeDocuments = [];
 let canManageKnowledgeSettings = false;
+let canManageSecurity = false;
+let systemKillSwitchEnabled = false;
 let authMode = 'login';
 const AGENT_LABELS = {
     Orchestrator: 'পরিকল্পনাকারী',
@@ -234,6 +240,7 @@ async function activateToken(token, displayName = '') {
     sessionStorage.setItem(TOKEN_STORAGE_KEY, apiToken);
     elements.accountName.textContent = displayName || userResponse.user.name;
     canManageKnowledgeSettings = userResponse.user.can_manage_knowledge_settings === true;
+    canManageSecurity = userResponse.user.can_manage_security === true;
     setConnected(true);
     await Promise.all([loadTasks(), loadApprovals()]);
     await loadAgentPacks();
@@ -294,7 +301,7 @@ function renderTaskList(tasks) {
     `).join('');
 }
 
-function renderAgentRuns(agentRuns = [], routing = null) {
+function renderAgentRuns(agentRuns = [], routing = null, taskId = null) {
     const agentRunByName = new Map(agentRuns.map((run) => [run.agent_name, run]));
     const agentSequence = routing?.agent_sequence?.length
         ? routing.agent_sequence
@@ -311,6 +318,9 @@ function renderAgentRuns(agentRuns = [], routing = null) {
         const replayAction = agentRun && [2, 3].includes(agentRun.status)
             ? `<button class="button button-quiet button-small" type="button" data-resume-agent-run-id="${escapeHtml(agentRun.id)}">এই ধাপটি Sandbox-এ আবার চালান</button>`
             : '';
+        const killAction = agentRun && [0, 1].includes(agentRun.status)
+            ? `<button class="button button-quiet button-small" type="button" data-kill-agent-run-id="${escapeHtml(agentRun.id)}" data-task-id="${escapeHtml(taskId)}">এই agent থামান</button>`
+            : '';
 
         return `
             <div class="agent-stage status-${escapeHtml(status)}">
@@ -319,6 +329,7 @@ function renderAgentRuns(agentRuns = [], routing = null) {
                 <span class="status-chip status-${escapeHtml(status)}">${escapeHtml(statusLabel(status))}</span>
                 ${extra}
                 ${replayAction}
+                ${killAction}
             </div>
         `;
     }).join('');
@@ -398,6 +409,11 @@ function renderTaskDetail(task) {
             `<button class="button button-small" type="button" data-live-transition-task-id="${escapeHtml(task.id)}">Live mode-এর safety gate যাচাই</button>`,
         );
     }
+    if ([0, 1].includes(task.status)) {
+        modeActions.unshift(
+            `<button class="button button-quiet button-small" type="button" data-kill-task-id="${escapeHtml(task.id)}">Task থামান</button>`,
+        );
+    }
 
     elements.taskDetail.innerHTML = `
         <div class="detail-header">
@@ -410,7 +426,7 @@ function renderTaskDetail(task) {
         </div>
         <div class="task-mode-actions">${modeActions.join('')}</div>
         ${checkInSummary}
-        <div class="agent-timeline">${renderAgentRuns(task.agent_runs || [], task.routing)}</div>
+        <div class="agent-timeline">${renderAgentRuns(task.agent_runs || [], task.routing, task.id)}</div>
         ${routingDetails ? `<section class="routing-reasons"><strong>কেন এই model</strong>${routingDetails}</section>` : ''}
         ${sharePanel}
         ${usageSummary}
@@ -946,11 +962,23 @@ function renderMemories(memories) {
     elements.memoryList.innerHTML = memories.length
         ? memories.map((memory) => `<article class="knowledge-item">
             <div><strong>${escapeHtml(memory.label || (Number(memory.type) === 0 ? 'Short-term memory' : 'Long-term memory'))}</strong>
-                <small>${Number(memory.type) === 0 ? 'Short-term' : 'Long-term'}${memory.expires_at ? ` · মেয়াদ ${escapeHtml(formatDate(memory.expires_at))}` : ''}</small>
+                <small>${Number(memory.scope_type) === 1 ? `Task #${escapeHtml(memory.task_id)}` : 'ব্যক্তিগত'} · ${Number(memory.type) === 0 ? 'Short-term' : 'Long-term'}${memory.status === 2 ? ' · পুরোনো version' : ''}${memory.expired ? ' · মেয়াদ শেষ' : ''}${memory.expires_at ? ` · মেয়াদ ${escapeHtml(formatDate(memory.expires_at))}` : ''}</small>
                 <p>${escapeHtml(memory.content)}</p></div>
-            <button class="button button-quiet button-small" type="button" data-delete-memory="${escapeHtml(memory.id)}">মুছুন</button>
+            ${memory.status === 1 ? `<button class="button button-quiet button-small" type="button" data-delete-memory="${escapeHtml(memory.id)}">মুছুন</button>` : ''}
         </article>`).join('')
         : '<div class="empty-state">এখনো কোনো memory সংরক্ষণ করা হয়নি।</div>';
+
+    const selectableMemories = memories.filter((memory) => (
+        Number(memory.scope_type) === 0
+        && Number(memory.status) === 1
+        && memory.expired !== true
+    ));
+    elements.taskMemoryChoices.innerHTML = selectableMemories.length
+        ? selectableMemories.map((memory) => `<label class="knowledge-document-choice">
+            <input type="checkbox" value="${escapeHtml(memory.id)}" data-task-memory-select>
+            <span><strong>${escapeHtml(memory.label || `Memory #${memory.id}`)}</strong><small>শুধু আপনার পছন্দে এই task-এ যাবে</small></span>
+        </label>`).join('')
+        : '<small>কোনো active ব্যক্তিগত memory নেই।</small>';
 }
 
 async function loadKnowledge() {
@@ -990,7 +1018,52 @@ async function loadKnowledge() {
     } else {
         elements.knowledgeAdminSettings.hidden = true;
     }
+
+    if (canManageSecurity) {
+        const killSwitchData = await apiRequest('/admin/security/kill-switch');
+        systemKillSwitchEnabled = killSwitchData.enabled === true;
+        elements.securityAdmin.hidden = false;
+        elements.systemKillSwitchButton.textContent = systemKillSwitchEnabled
+            ? 'সব agent execution চালু করুন'
+            : 'সব agent execution থামান';
+        elements.systemKillSwitchButton.setAttribute('aria-pressed', String(systemKillSwitchEnabled));
+    } else {
+        elements.securityAdmin.hidden = true;
+    }
 }
+
+elements.systemKillSwitchButton.addEventListener('click', async () => {
+    const enabled = !systemKillSwitchEnabled;
+    const confirmation = enabled
+        ? 'পুরো সিস্টেমের agent execution থামাবেন? চলমান provider call শেষ হওয়া পর্যন্ত অপেক্ষা লাগতে পারে।'
+        : 'সিস্টেম kill switch বন্ধ করে নতুন execution অনুমোদন করবেন?';
+    if (!window.confirm(confirmation)) {
+        return;
+    }
+
+    elements.systemKillSwitchButton.disabled = true;
+    try {
+        const responseData = await apiRequest('/admin/security/kill-switch', {
+            method: 'PUT',
+            body: JSON.stringify({
+                enabled,
+                reason: enabled ? 'Enabled by an administrator.' : null,
+            }),
+        });
+        systemKillSwitchEnabled = responseData.enabled === true;
+        elements.systemKillSwitchButton.textContent = systemKillSwitchEnabled
+            ? 'সব agent execution চালু করুন'
+            : 'সব agent execution থামান';
+        elements.systemKillSwitchButton.setAttribute('aria-pressed', String(systemKillSwitchEnabled));
+        showNotice(elements.success, systemKillSwitchEnabled
+            ? 'System kill switch চালু হয়েছে। চলমান কাজ পরবর্তী নিরাপত্তা checkpoint-এ থামবে।'
+            : 'System kill switch বন্ধ হয়েছে।');
+    } catch (error) {
+        showNotice(elements.error, error.message);
+    } finally {
+        elements.systemKillSwitchButton.disabled = false;
+    }
+});
 
 elements.knowledgeAdminSettingsForm.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -1159,6 +1232,32 @@ elements.memoryForm.elements.type.addEventListener('change', () => {
     expiry.disabled = elements.memoryForm.elements.type.value !== '0';
 });
 elements.memoryForm.elements.type.dispatchEvent(new Event('change'));
+elements.memoryForm.elements.scope_type.addEventListener('change', () => {
+    const taskId = elements.memoryForm.elements.task_id;
+    const taskScoped = elements.memoryForm.elements.scope_type.value === '1';
+    taskId.hidden = !taskScoped;
+    taskId.required = taskScoped;
+    if (!taskScoped) {
+        taskId.value = '';
+    }
+});
+elements.memoryForm.elements.scope_type.dispatchEvent(new Event('change'));
+const refreshScopedMemories = async () => {
+    const taskId = String(elements.memoryForm.elements.task_id.value || '').trim();
+    if (elements.memoryForm.elements.scope_type.value !== '1' || taskId === '') {
+        await loadKnowledge();
+        return;
+    }
+
+    try {
+        const responseData = await apiRequest(`/memories?task_id=${encodeURIComponent(taskId)}`);
+        renderMemories(responseData.memories || []);
+    } catch (error) {
+        showNotice(elements.error, error.message);
+    }
+};
+elements.memoryForm.elements.scope_type.addEventListener('change', refreshScopedMemories);
+elements.memoryForm.elements.task_id.addEventListener('change', refreshScopedMemories);
 elements.memoryForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     const formData = new FormData(elements.memoryForm);
@@ -1170,6 +1269,8 @@ elements.memoryForm.addEventListener('submit', async (event) => {
             method: 'POST',
             body: JSON.stringify({
                 type: Number(formData.get('type')),
+                scope_type: Number(formData.get('scope_type')),
+                task_id: String(formData.get('task_id') || '').trim() === '' ? null : Number(formData.get('task_id')),
                 label: String(formData.get('label') || '').trim() || null,
                 content: String(formData.get('content') || '').trim(),
                 expires_in_days: expiresInDays === '' ? null : Number(expiresInDays),
@@ -1177,6 +1278,8 @@ elements.memoryForm.addEventListener('submit', async (event) => {
         });
         elements.memoryForm.reset();
         elements.memoryForm.elements.type.dispatchEvent(new Event('change'));
+        elements.memoryForm.elements.task_id.hidden = true;
+        elements.memoryForm.elements.task_id.required = false;
         await loadKnowledge();
         showNotice(elements.success, 'Memory সংরক্ষণ হয়েছে।');
     } catch (error) {
@@ -1640,12 +1743,15 @@ elements.authForm.addEventListener('submit', async (event) => {
 async function clearSession() {
     apiToken = '';
     canManageKnowledgeSettings = false;
+    canManageSecurity = false;
+    systemKillSwitchEnabled = false;
     selectedTaskId = null;
     sessionStorage.removeItem(TOKEN_STORAGE_KEY);
     window.clearTimeout(refreshTimer);
     setConnected(false);
     renderTaskList([]);
     elements.knowledgeAdminSettings.hidden = true;
+    elements.securityAdmin.hidden = true;
     elements.taskList.innerHTML = '<div class="empty-state">কাজ দেখতে API token দিয়ে সংযুক্ত করুন।</div>';
     elements.taskDetail.innerHTML = '<div class="empty-state"><strong>একটি কাজ নির্বাচন করুন</strong><span>কাজের ধাপ ও agent-এর ফলাফল এখানে দেখা যাবে।</span></div>';
     elements.approvalList.innerHTML = '<div class="panel empty-state">অনুমোদন দেখতে API token দিয়ে সংযুক্ত করুন।</div>';
@@ -1686,6 +1792,8 @@ elements.taskForm.addEventListener('submit', async (event) => {
         agent_pack: String(formData.get('agent_pack') || '') || null,
         knowledge_document_ids: [...elements.taskKnowledgeDocuments.querySelectorAll('[data-task-knowledge-document]:checked')]
             .map((input) => Number(input.value)),
+        memory_ids: [...elements.taskMemoryChoices.querySelectorAll('[data-task-memory-select]:checked')]
+            .map((input) => Number(input.value)),
         max_cost: String(formData.get('max_cost') || '').trim() === ''
             ? null
             : Number(formData.get('max_cost')),
@@ -1699,6 +1807,7 @@ elements.taskForm.addEventListener('submit', async (event) => {
             && JSON.stringify(pendingTaskConfirmation.success_criteria) === JSON.stringify(taskData.success_criteria)
             && pendingTaskConfirmation.agent_pack === taskData.agent_pack
             && JSON.stringify(pendingTaskConfirmation.knowledge_document_ids) === JSON.stringify(taskData.knowledge_document_ids)
+            && JSON.stringify(pendingTaskConfirmation.memory_ids) === JSON.stringify(taskData.memory_ids)
             && pendingTaskConfirmation.max_cost === taskData.max_cost;
         if (!isCurrentEstimateConfirmed) {
             const estimateResponse = await apiRequest('/tasks/estimate', {
@@ -1708,6 +1817,7 @@ elements.taskForm.addEventListener('submit', async (event) => {
                     max_cost: taskData.max_cost,
                     agent_pack: taskData.agent_pack,
                     knowledge_document_ids: taskData.knowledge_document_ids,
+                    memory_ids: taskData.memory_ids,
                 }),
             });
             renderTaskEstimate(estimateResponse);
@@ -1716,6 +1826,7 @@ elements.taskForm.addEventListener('submit', async (event) => {
                 : {
                     ...taskData,
                     knowledge_context_token: estimateResponse.knowledge_preview?.token || null,
+                    memory_context_hash: estimateResponse.memory_preview?.hash || null,
                 };
             submitButton.innerHTML = estimateResponse.cost_estimate.can_complete === false
                 ? 'সীমার বাইরে — prompt ছোট করুন'
@@ -1724,6 +1835,7 @@ elements.taskForm.addEventListener('submit', async (event) => {
         }
 
         taskData.knowledge_context_token = pendingTaskConfirmation.knowledge_context_token;
+        taskData.memory_context_hash = pendingTaskConfirmation.memory_context_hash;
         const responseData = await apiRequest('/tasks', {
             method: 'POST',
             body: JSON.stringify(taskData),
@@ -1777,6 +1889,9 @@ function renderTaskEstimate(responseData) {
         responseData.knowledge_preview?.sources?.length
             ? `Selected file context: ${responseData.knowledge_preview.sources.map((source) => `${source.name} (chunk ${source.chunk})`).join(', ')}`
             : '',
+        responseData.memory_preview?.memories?.length
+            ? `Selected memory context: ${responseData.memory_preview.memories.map((memory) => memory.label || `Memory #${memory.id}`).join(', ')}`
+            : '',
         `কেন: ${routing.reason}`,
         `সর্বোচ্চ token: ${costEstimate.estimated_tokens ?? 'হিসাব করা যায়নি'} / ${costEstimate.maximum_tokens}`,
         costEstimate.can_complete === false
@@ -1813,8 +1928,29 @@ elements.taskDetail.addEventListener('click', async (event) => {
     const revokeShareButton = event.target.closest('[data-revoke-replay-share-id]');
     const copyShareButton = event.target.closest('[data-copy-replay-share-url]');
     const transitionButton = event.target.closest('[data-live-transition-task-id]');
+    const killTaskButton = event.target.closest('[data-kill-task-id]');
+    const killAgentButton = event.target.closest('[data-kill-agent-run-id]');
 
     try {
+        if (killTaskButton || killAgentButton) {
+            const target = killTaskButton || killAgentButton;
+            const confirmed = window.confirm('এটি task execution বন্ধ করবে। থামানো কাজ স্বয়ংক্রিয়ভাবে আবার চলবে না।');
+            if (!confirmed) {
+                return;
+            }
+
+            target.disabled = true;
+            const taskId = killTaskButton ? killTaskButton.dataset.killTaskId : target.dataset.taskId;
+            const endpoint = killAgentButton
+                ? `/tasks/${encodeURIComponent(taskId)}/agent-runs/${encodeURIComponent(target.dataset.killAgentRunId)}/kill-switch`
+                : `/tasks/${encodeURIComponent(taskId)}/kill-switch`;
+            await apiRequest(endpoint, { method: 'POST', body: JSON.stringify({}) });
+            await loadTasks();
+            await loadTask(taskId);
+            showNotice(elements.success, 'Execution থামানো হয়েছে।');
+            return;
+        }
+
         if (replayButton) {
             await loadSandboxReplay(replayButton.dataset.replayTaskId);
         }

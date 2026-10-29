@@ -38,8 +38,16 @@ Homestead.yaml
 /node_modules
 package-lock.json
 
-# Tests (only for running tests, not needed in repo)
+# Ignore local tests except security regression coverage maintained in the repository.
 /tests
+!/tests/
+/tests/**
+!/tests/Feature/
+!/tests/Feature/AgentFrameworkTest.php
+!/tests/Feature/AgentPackApiTest.php
+!/tests/Feature/OutboundActionThrottleTest.php
+!/tests/Feature/SecurityControlApiTest.php
+!/tests/Feature/UserLlmProviderResolverTest.php
 composer.lock
 # Laravel public assets
 /public/build
@@ -53,6 +61,7 @@ composer.lock
 
 # Documents
 *.md
+!/SECURITY-THREAT-MODEL.md
 *.doc
 *.docx
 *.pdf

@@ -69,7 +69,11 @@ class KnowledgeController extends Controller
 
     public function memories(Request $request): JsonResponse
     {
-        return $this->knowledgeService->memories($request->user());
+        $validated = $request->validate([
+            'task_id' => ['sometimes', 'integer', 'min:1'],
+        ]);
+
+        return $this->knowledgeService->memories($request->user(), $validated['task_id'] ?? null);
     }
 
     public function storeMemory(StoreUserMemoryRequest $request): JsonResponse
@@ -82,6 +86,8 @@ class KnowledgeController extends Controller
             $data['label'] ?? null,
             $data['content'],
             $data['expires_in_days'] ?? null,
+            $data['scope_type'] ?? USER_MEMORY_SCOPE_USER,
+            $data['task_id'] ?? null,
         );
     }
 

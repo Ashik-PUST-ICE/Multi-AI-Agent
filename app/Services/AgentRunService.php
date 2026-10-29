@@ -10,6 +10,7 @@ use App\Models\Scopes\TenantScope;
 use App\Models\Task;
 use App\Models\User;
 use App\Tenancy\TenantContext;
+use App\Tools\ExecutionHaltedException;
 use App\Tools\ToolApprovalRequiredException;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
@@ -59,13 +60,21 @@ class AgentRunService
             return;
         }
 
+        if (! $this->markStarted($agentRun)) {
+            return;
+        }
+
+        $agentRun->refresh()->load('task.user');
+        $task = $agentRun->task;
+        if ($task === null) {
+            throw new RuntimeException('The task associated with this agent run could not be found.');
+        }
         $user = $task->user;
 
         if ($user === null) {
             throw new RuntimeException('The task owner could not be found.');
         }
 
-        $this->markStarted($agentRun);
         $agentInput = $this->messageEnvelope($agentRun, $task);
         $prompt = $agentInput->payload['prompt'] ?? null;
         $context = $agentInput->payload['context'] ?? [];
@@ -76,9 +85,15 @@ class AgentRunService
 
         $agent = $this->agentFactory->make($agentRun->agent_name, $task->mode);
         try {
+            app(ExecutionKillSwitchService::class)->assertCanContinue($agentRun->fresh(['task']));
             $output = $agent->runForUser($user, $prompt, $context, $agentRun);
+            app(ExecutionKillSwitchService::class)->assertCanContinue($agentRun->fresh(['task']));
         } catch (ToolApprovalRequiredException $exception) {
             $this->requestToolApproval($agentRun, $task, $user, $exception);
+
+            return;
+        } catch (ExecutionHaltedException $exception) {
+            app(ExecutionKillSwitchService::class)->haltRun($agentRun, $exception->getMessage());
 
             return;
         }
@@ -112,8 +127,58 @@ class AgentRunService
         if ($messageEnvelope->taskId !== $task->id || $messageEnvelope->to !== $agentRun->agent_name) {
             throw new RuntimeException('The queued agent message is not addressed to this run.');
         }
+        $this->assertMessageProvenance($messageEnvelope, $agentRun, $task);
 
         return $messageEnvelope;
+    }
+
+    private function assertMessageProvenance(
+        AgentMessageEnvelope $messageEnvelope,
+        AgentRun $agentRun,
+        Task $task,
+    ): void {
+        if (in_array($messageEnvelope->type, ['task.created', 'task.live_transition'], true)) {
+            if ($messageEnvelope->from !== 'user') {
+                throw new RuntimeException('A task-start message must originate from its owner.');
+            }
+
+            return;
+        }
+
+        if ($messageEnvelope->type === 'agent.handoff') {
+            $previousRun = $task->agentRuns()
+                ->where('id', '<', $agentRun->id)
+                ->orderByDesc('id')
+                ->first();
+
+            if (
+                $previousRun === null
+                || $previousRun->status !== AGENT_RUN_STATUS_COMPLETED
+                || $previousRun->agent_name !== $messageEnvelope->from
+            ) {
+                throw new RuntimeException('The agent handoff sender is not the previous completed agent.');
+            }
+
+            return;
+        }
+
+        if ($messageEnvelope->type === 'task.input' && $messageEnvelope->from === 'task') {
+            return;
+        }
+
+        if ($messageEnvelope->type === 'task.replay') {
+            $registeredAgents = array_keys(config('agent_specs.agents', []));
+            if (
+                $task->mode !== TASK_MODE_SANDBOX
+                || ! in_array($messageEnvelope->from, ['task', 'user', ...$registeredAgents], true)
+            ) {
+                throw new RuntimeException('The replay message sender is invalid.');
+            }
+
+            return;
+        }
+
+        throw new RuntimeException('The queued agent message type or sender is not trusted.');
     }
 
     public function fail(int $agentRunId, Throwable $exception): void
@@ -264,18 +329,32 @@ class AgentRunService
         });
     }
 
-    private function markStarted(AgentRun $agentRun): void
+    private function markStarted(AgentRun $agentRun): bool
     {
-        DB::transaction(function () use ($agentRun): void {
-            $task = $agentRun->task;
+        $taskId = $agentRun->task_id;
+
+        return DB::transaction(function () use ($agentRun, $taskId): bool {
+            $task = Task::query()->lockForUpdate()->findOrFail($taskId);
+            $lockedRun = AgentRun::query()->lockForUpdate()->findOrFail($agentRun->id);
+            if ((int) $lockedRun->task_id !== (int) $task->id) {
+                return false;
+            }
+            if ($lockedRun->status !== AGENT_RUN_STATUS_PENDING) {
+                return false;
+            }
+            if (in_array($task->status, [TASK_STATUS_COMPLETED, TASK_STATUS_FAILED, TASK_STATUS_CANCELLED], true)) {
+                return false;
+            }
             $task->update([
                 'status' => TASK_STATUS_RUNNING,
                 'started_at' => $task->started_at ?? now(),
             ]);
-            $agentRun->update([
+            $lockedRun->update([
                 'status' => AGENT_RUN_STATUS_RUNNING,
-                'started_at' => $agentRun->started_at ?? now(),
+                'started_at' => $lockedRun->started_at ?? now(),
             ]);
+
+            return true;
         });
     }
 }

@@ -133,6 +133,10 @@
                             <legend>এই কাজের জন্য ফাইল (ঐচ্ছিক)</legend>
                             <div id="task-knowledge-documents"><small>ফাইল যোগ করলে এখানে বেছে নিতে পারবেন।</small></div>
                         </fieldset>
+                        <fieldset class="task-knowledge-fieldset">
+                            <legend>এই কাজের জন্য ব্যক্তিগত memory (ঐচ্ছিক)</legend>
+                            <div id="task-memory-choices"><small>Memory-তে নির্বাচিত active ব্যক্তিগত memory এখানে বেছে নিতে পারবেন।</small></div>
+                        </fieldset>
                         <label for="task-max-cost">এই কাজের খরচের সীমা (ঐচ্ছিক)</label>
                         <input id="task-max-cost" name="max_cost" type="number" min="0.000001" max="1000000" step="any" inputmode="decimal" placeholder="যেমন: 0.50">
                         <small class="form-help">মুদ্রা Settings-এর cost budget currency অনুযায়ী হবে। Account limit থাকলে কাজের সীমা সেটি অতিক্রম করতে পারবে না।</small>
@@ -353,6 +357,15 @@
                             <button class="button button-primary" type="submit">Admin settings সংরক্ষণ</button>
                         </form>
                     </section>
+                    <section class="panel knowledge-section" id="security-admin" hidden>
+                        <div class="brain-section-heading">
+                            <div>
+                                <h3>Execution security</h3>
+                                <p>Global kill switch blocks new agent execution. Running provider calls stop at their next security checkpoint.</p>
+                            </div>
+                        </div>
+                        <button class="button button-quiet" id="system-kill-switch-button" type="button" aria-pressed="false">System kill switch loading...</button>
+                    </section>
                     <section class="panel knowledge-section">
                         <div class="brain-section-heading">
                             <div><h3>ফাইল যোগ করুন</h3><p>PDF, Excel, CSV, TXT, Markdown এবং image সমর্থিত। Upload limit admin সেট করেন। Image OCR-এর জন্য server-এ Tesseract লাগবে।</p></div>
@@ -378,6 +391,13 @@
                             <div><h3>Memory</h3><p>Short-term memory মেয়াদ শেষে মুছে যাবে; long-term memory আপনি নিজে মুছতে পারবেন।</p></div>
                         </div>
                         <form id="memory-form" class="knowledge-form">
+                            <label class="brain-field" for="memory-scope"><span>Scope</span>
+                                <select id="memory-scope" name="scope_type">
+                                    <option value="0">শুধু আমার জন্য</option>
+                                    <option value="1">নির্দিষ্ট task-এর জন্য</option>
+                                </select>
+                            </label>
+                            <input name="task_id" type="number" min="1" placeholder="Task ID" hidden>
                             <label class="brain-field" for="memory-type"><span>ধরন</span>
                                 <select id="memory-type" name="type">
                                     <option value="0">Short-term</option>
