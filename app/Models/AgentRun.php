@@ -39,6 +39,20 @@ class AgentRun extends Model
         ];
     }
 
+    protected static function booted(): void
+    {
+        static::creating(function (self $agentRun): void {
+            $task = Task::query()->find($agentRun->task_id);
+            if ($task === null) {
+                return;
+            }
+
+            $agentRun->trace_id ??= $task->trace_id;
+            $agentRun->trace_span_id ??= bin2hex(random_bytes(8));
+            $agentRun->parent_span_id ??= $task->trace_span_id;
+        });
+    }
+
     public function task(): BelongsTo
     {
         return $this->belongsTo(Task::class);

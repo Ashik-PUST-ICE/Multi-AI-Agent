@@ -155,6 +155,21 @@
                         <button class="button button-quiet button-small" id="refresh-tasks" type="button">রিফ্রেশ</button>
                     </div>
 
+                    <section class="observability-panel panel" aria-labelledby="observability-heading">
+                        <div>
+                            <h2 id="observability-heading">রান পর্যবেক্ষণ</h2>
+                            <p>গত ৩০ দিনের ব্যর্থতার ধরন ও সীমিত সতর্কতা।</p>
+                        </div>
+                        <div class="observability-metrics" aria-live="polite">
+                            <span>নীরব ব্যর্থতা <strong id="silent-failure-count">—</strong></span>
+                            <span>একই ধাপে আটকে যাওয়া <strong id="stagnation-count">—</strong></span>
+                            <span>Reviewer signal <strong id="skeptic-signal">—</strong></span>
+                        </div>
+                        <ul id="failure-categories" class="failure-category-list">
+                            <li>পর্যবেক্ষণ লোড হচ্ছে…</li>
+                        </ul>
+                    </section>
+
                     <div class="task-layout">
                         <div class="task-list panel" id="task-list" aria-live="polite">
                             <div class="empty-state">কাজ দেখতে API token দিয়ে সংযুক্ত করুন।</div>

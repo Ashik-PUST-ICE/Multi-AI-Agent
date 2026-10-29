@@ -45,6 +45,7 @@ package-lock.json
 !/tests/Feature/
 !/tests/Feature/AgentFrameworkTest.php
 !/tests/Feature/AgentPackApiTest.php
+!/tests/Feature/FlightRecorderApiTest.php
 !/tests/Feature/OutboundActionThrottleTest.php
 !/tests/Feature/SecurityControlApiTest.php
 !/tests/Feature/UserLlmProviderResolverTest.php

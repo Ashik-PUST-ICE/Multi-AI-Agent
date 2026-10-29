@@ -150,6 +150,14 @@ Agent specifications define role, schemas, permitted tools, trust metadata, toke
 
 LLM provider, model, timeout, and tool-call settings are controlled by application settings/configuration. User API keys are encrypted at rest; never add provider credentials to source code or commit them.
 
+## Observability
+
+Authenticated owners can read the last 30 days of failure-category and warning counts from `GET /api/v1/observability/summary`. The task owner can export one task's Flight Recorder as OpenTelemetry-compatible JSON with `GET /api/v1/tasks/{task}/trace`; trace IDs and parent span IDs connect task, agent-run, model-call, and tool events. Exported spans contain allowlisted operational attributes only and exclude prompts, model output, tool arguments/results, credentials, and arbitrary event payloads.
+
+The Skeptic review signal is a bounded heuristic: repeated approvals without findings raise a review warning after five assessments, but this is not proof of sycophancy. Repeated normalized output from the same agent on the same task input stops that task as stagnated; repeated output after a context change is not treated as a loop. Empty text outputs are recorded as silent failures and cannot complete a task. Failure counters are based on recorded failed events and are limited to 1,000 recent events per summary.
+
+The trace endpoint emits OTLP trace JSON but does not push to a collector or claim full OpenTelemetry SDK instrumentation. Agent handoffs remain on the existing versioned envelope; A2A and MCP protocol adapters are not implemented by this phase.
+
 ## Validation
 
 ```sh

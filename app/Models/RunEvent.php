@@ -7,6 +7,26 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class RunEvent extends Model
 {
+    protected static function booted(): void
+    {
+        static::creating(function (self $event): void {
+            $agentRun = $event->agent_run_id === null
+                ? null
+                : AgentRun::query()->find($event->agent_run_id);
+            $task = $event->task_id === null
+                ? $agentRun?->task
+                : Task::query()->find($event->task_id);
+            if ($task === null) {
+                return;
+            }
+
+            $event->task_id ??= $task->id;
+            $event->trace_id ??= $task->trace_id;
+            $event->trace_span_id ??= bin2hex(random_bytes(8));
+            $event->parent_span_id ??= $agentRun?->trace_span_id ?? $task->trace_span_id;
+        });
+    }
+
     protected $attributes = [
         'mode' => TASK_MODE_SANDBOX,
     ];

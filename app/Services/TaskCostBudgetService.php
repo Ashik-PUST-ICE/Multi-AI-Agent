@@ -114,6 +114,7 @@ class TaskCostBudgetService
         string $model,
         array $usage,
         ?array $pricing,
+        int $durationMs = 0,
     ): ?array {
         $cost = $pricing === null
             ? null
@@ -130,6 +131,7 @@ class TaskCostBudgetService
             'model' => $model,
             'usage' => $usage,
             'cost' => $cost,
+            'duration_ms' => max(0, $durationMs),
         ]);
 
         return $cost;

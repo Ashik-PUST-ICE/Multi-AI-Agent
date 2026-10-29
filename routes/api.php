@@ -6,8 +6,9 @@ use App\Http\Controllers\Api\AgentTrustController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\KnowledgeController;
 use App\Http\Controllers\Api\KnowledgeSystemSettingsController;
-use App\Http\Controllers\Api\SecurityControlController;
+use App\Http\Controllers\Api\ObservabilityController;
 use App\Http\Controllers\Api\ProviderSettingsController;
+use App\Http\Controllers\Api\SecurityControlController;
 use App\Http\Controllers\Api\TaskController;
 use App\Http\Controllers\Api\TaskReplayShareController;
 use App\Http\Controllers\Api\ToolApprovalController;
@@ -145,9 +146,14 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
         ->middleware('throttle:10,1')
         ->name('api.v1.tasks.store');
     Route::get('/v1/tasks', [TaskController::class, 'index'])->name('api.v1.tasks.index');
+    Route::get('/v1/observability/summary', [ObservabilityController::class, 'summary'])
+        ->name('api.v1.observability.summary');
     Route::get('/v1/tasks/{task}', [TaskController::class, 'show'])
         ->whereNumber('task')
         ->name('api.v1.tasks.show');
+    Route::get('/v1/tasks/{task}/trace', [ObservabilityController::class, 'trace'])
+        ->whereNumber('task')
+        ->name('api.v1.tasks.trace');
     Route::post('/v1/tasks/{task}/kill-switch', [SecurityControlController::class, 'stopTask'])
         ->whereNumber('task')
         ->name('api.v1.tasks.kill-switch');

@@ -83,6 +83,10 @@ const elements = {
     taskForm: document.querySelector('#task-form'),
     taskMaxCost: document.querySelector('#task-max-cost'),
     taskList: document.querySelector('#task-list'),
+    silentFailureCount: document.querySelector('#silent-failure-count'),
+    stagnationCount: document.querySelector('#stagnation-count'),
+    skepticSignal: document.querySelector('#skeptic-signal'),
+    failureCategories: document.querySelector('#failure-categories'),
     tokenInput: document.querySelector('#api-token'),
     views: document.querySelectorAll('.view-panel'),
     navigationButtons: document.querySelectorAll('[data-view]'),
@@ -500,6 +504,34 @@ async function loadTasks() {
     } else {
         window.clearTimeout(refreshTimer);
     }
+
+    await loadObservabilitySummary();
+}
+
+async function loadObservabilitySummary() {
+    const summary = await apiRequest('/observability/summary');
+    const warnings = summary.warnings || {};
+    const reviewerSignal = summary.skeptic_review_signal || {};
+    elements.silentFailureCount.textContent = String(warnings.silent_failures || 0);
+    elements.stagnationCount.textContent = String(warnings.stagnation || 0);
+    elements.skepticSignal.textContent = reviewerSignal.warning === true
+        ? 'পর্যালোচনা প্রয়োজন'
+        : 'কোনো সংকেত নেই';
+
+    const categories = Object.entries(summary.failure_categories || {});
+    elements.failureCategories.replaceChildren();
+    if (categories.length === 0) {
+        const emptyItem = document.createElement('li');
+        emptyItem.textContent = 'এই সময়ে কোনো failure record নেই।';
+        elements.failureCategories.append(emptyItem);
+        return;
+    }
+
+    categories.forEach(([category, count]) => {
+        const item = document.createElement('li');
+        item.textContent = `${category}: ${count}`;
+        elements.failureCategories.append(item);
+    });
 }
 
 function scheduleTaskRefresh() {

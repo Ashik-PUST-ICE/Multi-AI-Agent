@@ -225,6 +225,19 @@ abstract class BaseAgent
                         'Agent output does not match its specification: '.implode('; ', $outputErrors),
                     );
                 }
+                if (array_key_exists('text', $result)
+                    && is_string($result['text'])
+                    && trim($result['text']) === '') {
+                    if ($agentRun !== null) {
+                        $this->activityLogger?->recordEvent($agentRun, 'observability.silent_failure', [
+                            'agent' => $this->name(),
+                            'reason' => 'empty_output',
+                            'failure_category' => 'validation',
+                        ]);
+                    }
+
+                    throw new RuntimeException('The agent returned an empty successful output.');
+                }
                 $this->activityLogger?->recordEvent($agentRun, 'agent.completed', [
                     'agent' => $this->name(),
                     'provider' => $activeProviderId,
@@ -377,6 +390,7 @@ abstract class BaseAgent
             $options['model'] = $model;
         }
 
+        $llmStartedAt = hrtime(true);
         try {
             $response = $provider->chat($messages, $toolDefinitions, $options);
         } catch (ConnectionException $exception) {
@@ -397,6 +411,7 @@ abstract class BaseAgent
                     $model,
                     $responseUsage,
                     $pricing,
+                    (int) ((hrtime(true) - $llmStartedAt) / 1_000_000),
                 );
             }
             $tokenBudgetService->recordUsage($agentRun, $cumulativeUsage, $maximumTokens);

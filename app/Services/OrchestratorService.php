@@ -478,6 +478,67 @@ class OrchestratorService
                 throw new RuntimeException('The task for this agent run could not be found.');
             }
 
+            if (array_key_exists('text', $output)
+                && is_string($output['text'])
+                && trim($output['text']) === '') {
+                $message = 'The agent returned an empty successful output.';
+                $agentRun->update([
+                    'status' => AGENT_RUN_STATUS_FAILED,
+                    'error_message' => $message,
+                    'completed_at' => now(),
+                ]);
+                $task->update([
+                    'status' => TASK_STATUS_FAILED,
+                    'error_message' => $message,
+                    'completed_at' => now(),
+                ]);
+                $this->recordTaskEvent($agentRun, $task, 'observability.silent_failure', [
+                    'agent' => $agentRun->agent_name,
+                    'reason' => 'empty_output',
+                    'failure_category' => 'validation',
+                ]);
+
+                return;
+            }
+
+            $currentText = is_string($output['text'] ?? null)
+                ? preg_replace('/\s+/u', ' ', trim($output['text']))
+                : null;
+            $previousRun = $task->agentRuns()
+                ->where('agent_name', $agentRun->agent_name)
+                ->where('status', AGENT_RUN_STATUS_COMPLETED)
+                ->where('id', '<', $agentRun->id)
+                ->latest('id')
+                ->first(['id', 'input', 'output']);
+            $previousText = is_string($previousRun?->output['text'] ?? null)
+                ? preg_replace('/\s+/u', ' ', trim($previousRun->output['text']))
+                : null;
+            $currentInputHash = hash('sha256', serialize($agentRun->input ?? []));
+            $previousInputHash = hash('sha256', serialize($previousRun?->input ?? []));
+            if ($currentText !== null
+                && $currentText !== ''
+                && $currentText === $previousText
+                && $currentInputHash === $previousInputHash) {
+                $message = 'Repeated identical output from the same agent indicates task stagnation.';
+                $agentRun->update([
+                    'status' => AGENT_RUN_STATUS_FAILED,
+                    'error_message' => $message,
+                    'completed_at' => now(),
+                ]);
+                $task->update([
+                    'status' => TASK_STATUS_FAILED,
+                    'error_message' => $message,
+                    'completed_at' => now(),
+                ]);
+                $this->recordTaskEvent($agentRun, $task, 'observability.stagnation_detected', [
+                    'agent' => $agentRun->agent_name,
+                    'repeated_count' => 2,
+                    'failure_category' => 'coordination',
+                ]);
+
+                return;
+            }
+
             $agentRun->update([
                 'status' => AGENT_RUN_STATUS_COMPLETED,
                 'output' => $output,

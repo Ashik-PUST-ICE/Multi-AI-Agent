@@ -48,6 +48,8 @@ class Task extends Model
     {
         static::creating(function (self $task): void {
             $task->objective_sha256 ??= hash('sha256', (string) $task->description);
+            $task->trace_id ??= bin2hex(random_bytes(16));
+            $task->trace_span_id ??= bin2hex(random_bytes(8));
         });
     }
 
