@@ -80,6 +80,10 @@
                     <span aria-hidden="true">✦</span>
                     <span>Brain</span>
                 </button>
+                <button class="navigation-link" data-view="knowledge" type="button">
+                    <span aria-hidden="true">▤</span>
+                    <span>ফাইল ও Memory</span>
+                </button>
             </nav>
 
             <div class="sidebar-footer">
@@ -125,6 +129,10 @@
                         <select id="task-agent-pack" name="agent_pack">
                             <option value="">কোনো pack নয়</option>
                         </select>
+                        <fieldset class="task-knowledge-fieldset">
+                            <legend>এই কাজের জন্য ফাইল (ঐচ্ছিক)</legend>
+                            <div id="task-knowledge-documents"><small>ফাইল যোগ করলে এখানে বেছে নিতে পারবেন।</small></div>
+                        </fieldset>
                         <label for="task-max-cost">এই কাজের খরচের সীমা (ঐচ্ছিক)</label>
                         <input id="task-max-cost" name="max_cost" type="number" min="0.000001" max="1000000" step="any" inputmode="decimal" placeholder="যেমন: 0.50">
                         <small class="form-help">মুদ্রা Settings-এর cost budget currency অনুযায়ী হবে। Account limit থাকলে কাজের সীমা সেটি অতিক্রম করতে পারবে না।</small>
@@ -306,6 +314,84 @@
                         </div>
                     </form>
                 </section>
+
+                <section class="view-panel" id="knowledge-view" aria-labelledby="knowledge-heading">
+                    <div class="section-heading">
+                        <div>
+                            <p class="eyebrow">PRIVATE KNOWLEDGE</p>
+                            <h2 id="knowledge-heading">ফাইল, RAG ও Memory</h2>
+                            <p class="section-description">আপনার ফাইল private storage-এ থাকে। Index করতে নির্বাচিত embedding provider-এ ফাইলের পাঠানো অংশ যাবে।</p>
+                        </div>
+                    </div>
+                    <section class="panel knowledge-section">
+                        <div class="brain-section-heading">
+                            <div>
+                                <h3>Embedding model</h3>
+                                <p>নিজের Brain settings-এ সংরক্ষিত key ব্যবহার হবে। Embedding খরচ task estimate-এ অন্তর্ভুক্ত নয়।</p>
+                            </div>
+                        </div>
+                        <form id="embedding-settings-form" class="knowledge-form">
+                            <label class="brain-field" for="embedding-provider"><span>Provider</span><select id="embedding-provider" name="provider" required></select></label>
+                            <label class="brain-field" for="embedding-model"><span>Embedding model</span><select id="embedding-model" name="model" required></select></label>
+                            <button class="button button-primary" type="submit">Embedding settings সংরক্ষণ</button>
+                            <span id="embedding-settings-status" class="form-help"></span>
+                        </form>
+                    </section>
+                    <section class="panel knowledge-section" id="knowledge-admin-settings" hidden>
+                        <div class="brain-section-heading">
+                            <div>
+                                <h3>Knowledge processing settings (admin)</h3>
+                                <p>সিস্টেমজুড়ে upload/extraction limits ও chunking policy। OCR executable path এখানে রাখা হয় না; সেটি server configuration।</p>
+                            </div>
+                        </div>
+                        <form id="knowledge-admin-settings-form" class="knowledge-form">
+                            <label class="brain-field" for="knowledge-max-upload"><span>সর্বোচ্চ upload (KB)</span><input id="knowledge-max-upload" name="maximum_upload_kilobytes" type="number" min="1" max="51200" required></label>
+                            <label class="brain-field" for="knowledge-max-extracted"><span>সর্বোচ্চ extracted characters</span><input id="knowledge-max-extracted" name="maximum_extracted_characters" type="number" min="10000" max="2000000" required></label>
+                            <label class="brain-field" for="knowledge-max-chunks"><span>প্রতি ফাইলে সর্বোচ্চ chunks</span><input id="knowledge-max-chunks" name="maximum_chunks_per_document" type="number" min="1" max="5000" required></label>
+                            <label class="brain-field" for="knowledge-chunk-size"><span>Chunk characters</span><input id="knowledge-chunk-size" name="chunk_characters" type="number" min="200" max="5000" required></label>
+                            <label class="brain-field" for="knowledge-chunk-overlap"><span>Chunk overlap characters</span><input id="knowledge-chunk-overlap" name="chunk_overlap_characters" type="number" min="0" max="4999" required></label>
+                            <button class="button button-primary" type="submit">Admin settings সংরক্ষণ</button>
+                        </form>
+                    </section>
+                    <section class="panel knowledge-section">
+                        <div class="brain-section-heading">
+                            <div><h3>ফাইল যোগ করুন</h3><p>PDF, Excel, CSV, TXT, Markdown এবং image সমর্থিত। Upload limit admin সেট করেন। Image OCR-এর জন্য server-এ Tesseract লাগবে।</p></div>
+                        </div>
+                        <form id="knowledge-upload-form" class="knowledge-form">
+                            <input type="file" name="file" accept=".pdf,.xlsx,.xls,.csv,.txt,.md,.png,.jpg,.jpeg,.webp" required>
+                            <button class="button button-primary" type="submit">Private file আপলোড ও index</button>
+                        </form>
+                        <div id="knowledge-document-list" class="knowledge-list" aria-live="polite"><div class="empty-state">ফাইল লোড হচ্ছে।</div></div>
+                    </section>
+                    <section class="panel knowledge-section">
+                        <div class="brain-section-heading">
+                            <div><h3>ফাইলে semantic search</h3><p>ফলাফলে document ও chunk citation থাকবে।</p></div>
+                        </div>
+                        <form id="knowledge-search-form" class="knowledge-form">
+                            <input name="query" type="search" maxlength="2000" placeholder="ফাইলগুলোতে কী খুঁজবেন?" required>
+                            <button class="button button-quiet" type="submit">Search</button>
+                        </form>
+                        <div id="knowledge-search-results" class="knowledge-list" aria-live="polite"></div>
+                    </section>
+                    <section class="panel knowledge-section">
+                        <div class="brain-section-heading">
+                            <div><h3>Memory</h3><p>Short-term memory মেয়াদ শেষে মুছে যাবে; long-term memory আপনি নিজে মুছতে পারবেন।</p></div>
+                        </div>
+                        <form id="memory-form" class="knowledge-form">
+                            <label class="brain-field" for="memory-type"><span>ধরন</span>
+                                <select id="memory-type" name="type">
+                                    <option value="0">Short-term</option>
+                                    <option value="1">Long-term</option>
+                                </select>
+                            </label>
+                            <input name="label" type="text" maxlength="120" placeholder="নাম (ঐচ্ছিক)">
+                            <input name="expires_in_days" type="number" min="1" max="365" placeholder="Short-term মেয়াদ (দিন)">
+                            <textarea name="content" rows="3" maxlength="5000" placeholder="আপনার memory লিখুন" required></textarea>
+                            <button class="button button-primary" type="submit">Memory সংরক্ষণ</button>
+                        </form>
+                        <div id="memory-list" class="knowledge-list" aria-live="polite"><div class="empty-state">Memory লোড হচ্ছে।</div></div>
+                    </section>
+                </section>
             </main>
 
             <footer class="page-footer">
@@ -335,6 +421,7 @@
         <div class="mobile-more-menu" id="mobile-more-menu" hidden>
             <p>Provider, API key ও routing controls Brain পেজে পরিচালনা করুন।</p>
             <button class="button button-quiet button-small" data-view="brain" type="button">Brain settings খুলুন</button>
+            <button class="button button-quiet button-small" data-view="knowledge" type="button">ফাইল ও Memory খুলুন</button>
         </div>
     </div>
 </body>

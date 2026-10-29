@@ -27,7 +27,7 @@ Laravel API-first multi-agent workspace. The Milestone 1 web client submits task
    php artisan db:seed --class='Database\Seeders\AgentSpecSeeder'
    ```
 
-   The default seeder registers the `user` and `admin` roles and the `agent_specs.manage` and `agent_packs.manage` permissions. The agent-spec seeder registers the configured versioned agent specifications, including the Phase J Skeptic. Starter agent packs are seeded on first access to the pack API.
+   The default seeder registers the `user` and `admin` roles and the `agent_specs.manage`, `agent_packs.manage`, and `knowledge_settings.manage` permissions. The agent-spec seeder registers the configured versioned agent specifications, including the Phase J Skeptic. Starter agent packs are seeded on first access to the pack API.
 
 3. Install frontend dependencies and build the client:
 
@@ -76,6 +76,19 @@ Each user controls their own agent trust levels on the Agents page. Orchestrator
 | `GET` | `/api/v1/user` | Return the authenticated user's account |
 | `GET` | `/api/v1/trust` | Read the authenticated user's agent trust levels and change history |
 | `PUT` | `/api/v1/trust/{agentName}` | Change one of the authenticated user's agent trust levels, with a reason |
+| `GET` | `/api/v1/knowledge/documents` | List the authenticated user's private documents and index status |
+| `POST` | `/api/v1/knowledge/documents` | Upload, extract, chunk, and index a private document |
+| `GET` | `/api/v1/knowledge/documents/{document}/download` | Download an owned private document |
+| `POST` | `/api/v1/knowledge/documents/{document}/reindex` | Rebuild an owned document's index for the selected embedding model |
+| `DELETE` | `/api/v1/knowledge/documents/{document}` | Delete an owned document and its indexed chunks |
+| `GET` | `/api/v1/knowledge/embedding-settings` | Read supported embedding choices and the selected setting (never API keys) |
+| `PUT` | `/api/v1/knowledge/embedding-settings` | Select a supported embedding provider and model |
+| `POST` | `/api/v1/knowledge/search` | Search indexed documents and return source/chunk citations |
+| `GET` | `/api/v1/admin/knowledge-settings` | Read system-wide Knowledge limits (requires `knowledge_settings.manage`) |
+| `PUT` | `/api/v1/admin/knowledge-settings` | Update system-wide Knowledge limits (requires `knowledge_settings.manage`) |
+| `GET` | `/api/v1/memories` | List the user's short- and long-term memories |
+| `POST` | `/api/v1/memories` | Create a user-owned memory |
+| `DELETE` | `/api/v1/memories/{memory}` | Delete an owned memory |
 | `GET` | `/api/v1/tasks` | List the authenticated user's tasks |
 | `POST` | `/api/v1/tasks/estimate` | Preview routing, token ceiling, and available user-entered price estimates |
 | `POST` | `/api/v1/tasks` | Create and queue a sandbox task |
@@ -103,9 +116,19 @@ Each user controls their own agent trust levels on the Agents page. Orchestrator
 | `POST` | `/api/v1/admin/agent-packs/{slug}/versions/{version}/status` | Activate a reviewed custom draft (`status`: 1 active, 2 retired) |
 | `POST` | `/api/v1/admin/agent-packs/{slug}/versions/{version}/rollback` | Create a draft from an earlier version |
 
+## Private knowledge and memory
+
+Configure an embedding provider and model in the Knowledge view before uploading. Embedding choices currently include OpenAI and Gemini; the user's saved provider key is used server-side and is never returned by the API. The Knowledge File Manager service stores bytes on Laravel's private `local` disk, while `knowledge_documents` owns per-user metadata and `knowledge_chunks` owns extracted text and embeddings. Bytes are not stored in the database and are never served from the public disk. Supported documents are TXT, Markdown, CSV, PDF, XLS/XLSX, and PNG/JPG/JPEG/WEBP. PDF and spreadsheet extraction use Composer libraries; image OCR requires a local Tesseract installation, whose executable path is host configuration (`KNOWLEDGE_OCR_BINARY`) and is not an end-user setting. Files are treated as data only: spreadsheet formulas/macros are not executed.
+
+Admins with the `knowledge_settings.manage` permission can change upload size, extraction size, chunk count, chunk size, and overlap from the Knowledge page. These operational policies are stored in the database and apply system-wide. The configured upload limit must not exceed the PHP/web-server request limits. Storage credentials, encryption/app keys, and host executable paths remain server-side configuration; do not expose them as ordinary database form inputs.
+
+Changing the embedding provider or model marks existing documents as requiring reindexing. Reindexing replaces a document's old chunks only after extraction and embedding succeed; failed reindex attempts leave the prior index intact. Search and task context only use chunks matching the currently selected embedding settings. Task context is opt-in: select the documents before estimating, then submit with the short-lived preview token returned by the estimate. The task stores source document and chunk citations alongside the selected excerpts. Embedding-provider charges are separate from the task's LLM cost estimate.
+
+Memory records are private to their owner. Short-term memories may have an expiry; users can view and delete their memories in the Knowledge view.
+
 Task submission accepts `title`, `prompt`, and optionally an enabled `agent_pack` slug, up to 10 distinct `success_criteria` strings (500 characters each), and a task cost cap; any client-supplied `mode` is ignored and tasks start in Sandbox. Sandbox tools are routed to `simulate()` only, sandbox runs use the configured lower token ceiling, and when user-entered rates exist they use the least expensive approved model in a single currency. Messages and run events carry their execution mode. The owner-scoped replay endpoint reads recorded events and sanitized messages only; it never invokes tools or providers. Restarting a completed or failed stage creates a new Sandbox task, uses current approved model settings and trust gates, and does not repeat Live actions. Share links are bearer links whose hashes are stored server-side; they expire within seven days, can be revoked by the owner, and expose a whitelisted event timeline only—not prompts, message content, or arbitrary event payloads. Provider cost in the timeline is computed from provider-reported/estimated token usage and the user's configured rates, and is not a billing statement.
 
-The explicit Live transition endpoint records user requests, but is currently fail-closed: a completed Sandbox task must have trusted `evaluation.passed` and `skeptic.approved` events, approved Live models, credentials, and enough Live token budget. Evaluation is not implemented, so ordinary Sandbox tasks cannot currently transition. If those gates later pass, it creates a separate Live task; tool approvals and token limits continue to apply. No file, memory, or real-data connector is integrated, so Sandbox currently sees only the task prompt and simulated tool results; there is no real-data access toggle yet. Agent specs are mode-independent definitions. Agent packs provide domain guidance for the original four agents only; their allowed tools and minimum Trust levels are derived from the active agent specifications, never from pack content. Users must install and enable a pack before using it, and each task stores the selected pack version for deterministic execution. Admin-authored custom packs are versioned, and built-in packs are read-only. Separate Sandbox/Live API keys are also not implemented.
+The explicit Live transition endpoint records user requests, but is currently fail-closed: a completed Sandbox task must have trusted `evaluation.passed` and `skeptic.approved` events, approved Live models, credentials, and enough Live token budget. Evaluation is not implemented, so ordinary Sandbox tasks cannot currently transition. If those gates later pass, it creates a separate Live task; tool approvals and token limits continue to apply. Knowledge documents can only be included in a task when the user explicitly selects them; there is no external real-data connector or automatic whole-library context injection. Agent specs are mode-independent definitions. Agent packs provide domain guidance for the original four agents only; their allowed tools and minimum Trust levels are derived from the active agent specifications, never from pack content. Users must install and enable a pack before using it, and each task stores the selected pack version for deterministic execution. Admin-authored custom packs are versioned, and built-in packs are read-only. Separate Sandbox/Live API keys are also not implemented.
 
 Sensitive live tools require owner approval for the exact tool input; approval requests expire and are rejected when expired. Live web search remains disabled until its security adapter is implemented.
 

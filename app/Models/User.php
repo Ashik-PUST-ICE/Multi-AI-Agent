@@ -123,4 +123,14 @@ class User extends Authenticatable
     {
         return $this->hasMany(UserAgentPack::class);
     }
+
+    public function knowledgeDocuments(): HasMany
+    {
+        return $this->hasMany(KnowledgeDocument::class);
+    }
+
+    public function memories(): HasMany
+    {
+        return $this->hasMany(UserMemory::class);
+    }
 }

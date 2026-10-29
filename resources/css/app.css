@@ -103,6 +103,10 @@ main { max-width: 1260px; margin: 0 auto; padding: 31px 0 40px; }
 .task-form textarea { min-height: 108px; line-height: 1.6; }
 .form-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 4px; color: var(--muted); font-size: 10px; }
 .task-estimate { padding: 12px; border: 1px solid #e5e9f1; border-radius: 9px; background: #f8f9fc; color: #536078; font-size: 11px; line-height: 1.6; white-space: pre-line; }
+.task-knowledge-fieldset { display: grid; gap: 7px; padding: 12px; border: 1px solid #e1e6ee; border-radius: 8px; }
+.task-knowledge-fieldset legend { padding: 0 5px; color: #4c5870; font-size: 11px; font-weight: 700; }
+#task-knowledge-documents { display: flex; flex-wrap: wrap; gap: 9px; }
+.task-knowledge-choice { display: inline-flex; align-items: center; gap: 6px; color: #536078; font-size: 10px; }
 .brain-section { display: grid; gap: 16px; margin-top: 16px; padding: 20px; }
 .brain-section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .brain-section-heading h3 { margin: 0 0 5px; font-size: 14px; }
@@ -127,6 +131,21 @@ main { max-width: 1260px; margin: 0 auto; padding: 31px 0 40px; }
 .pack-admin-form { display: grid; gap: 9px; }
 .pack-admin-form input:not([type="checkbox"]), .pack-admin-form textarea, #task-agent-pack { width: 100%; padding: 10px 12px; border: 1px solid #e1e6ee; border-radius: 8px; background: #fff; color: var(--ink); font-size: 12px; }
 .pack-agent-choices { display: flex; flex-wrap: wrap; gap: 12px; color: var(--muted); font-size: 11px; }
+.knowledge-section { display: grid; gap: 14px; margin-top: 16px; padding: 20px; }
+.knowledge-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: end; gap: 12px; }
+.knowledge-form input:not([type="file"]), .knowledge-form textarea, .knowledge-form select { width: 100%; min-width: 0; padding: 10px 12px; border: 1px solid #e1e6ee; border-radius: 8px; background: #fff; color: var(--ink); font-size: 12px; }
+.knowledge-form textarea { resize: vertical; }
+.knowledge-list { display: grid; gap: 9px; }
+.knowledge-item { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 13px; border: 1px solid #e8ebf2; border-radius: 9px; }
+.knowledge-item > div:first-child, .knowledge-document-choice > span { display: grid; gap: 4px; min-width: 0; }
+.knowledge-item strong { font-size: 12px; overflow-wrap: anywhere; }
+.knowledge-item small, .knowledge-search-result small { color: var(--muted); font-size: 10px; }
+.knowledge-item p { margin: 4px 0 0; color: #536078; font-size: 11px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.knowledge-document-choice { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.knowledge-document-choice input { flex: 0 0 auto; }
+.knowledge-item-actions { display: flex; align-items: center; gap: 7px; }
+.knowledge-search-result { padding: 13px; border-left: 3px solid #8277e8; border-radius: 7px; background: #f8f8fc; }
+.knowledge-search-result p { margin: 0 0 7px; color: #39445a; font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
 .trust-section { display: grid; gap: 16px; margin-top: 18px; padding: 20px; }
 .agent-trust-list { display: grid; gap: 15px; }
 .agent-trust-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
@@ -267,6 +286,8 @@ main { max-width: 1260px; margin: 0 auto; padding: 31px 0 40px; }
     .brain-form-grid, .agent-brain-grid, .agent-directory, .agent-trust-grid, .provider-key-list { grid-template-columns: 1fr; }
     .agent-pack-card { align-items: flex-start; flex-direction: column; }
     .agent-pack-actions { justify-content: flex-start; }
+    .knowledge-form { grid-template-columns: 1fr; }
+    .knowledge-item { align-items: flex-start; flex-direction: column; }
     .brain-section { padding: 15px; }
     .model-catalog-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
     .model-approval { grid-column: 1 / -1; }

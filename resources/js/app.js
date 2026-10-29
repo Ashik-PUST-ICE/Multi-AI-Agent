@@ -43,6 +43,19 @@ const elements = {
     agentPackAdminList: document.querySelector('#agent-pack-admin-list'),
     agentPackForm: document.querySelector('#agent-pack-form'),
     agentPackFormStatus: document.querySelector('#agent-pack-form-status'),
+    embeddingSettingsForm: document.querySelector('#embedding-settings-form'),
+    embeddingProvider: document.querySelector('#embedding-provider'),
+    embeddingModel: document.querySelector('#embedding-model'),
+    embeddingSettingsStatus: document.querySelector('#embedding-settings-status'),
+    knowledgeAdminSettings: document.querySelector('#knowledge-admin-settings'),
+    knowledgeAdminSettingsForm: document.querySelector('#knowledge-admin-settings-form'),
+    knowledgeUploadForm: document.querySelector('#knowledge-upload-form'),
+    knowledgeDocumentList: document.querySelector('#knowledge-document-list'),
+    taskKnowledgeDocuments: document.querySelector('#task-knowledge-documents'),
+    knowledgeSearchForm: document.querySelector('#knowledge-search-form'),
+    knowledgeSearchResults: document.querySelector('#knowledge-search-results'),
+    memoryForm: document.querySelector('#memory-form'),
+    memoryList: document.querySelector('#memory-list'),
     brainSettingsForm: document.querySelector('#brain-settings-form'),
     defaultProvider: document.querySelector('#default-provider'),
     defaultModel: document.querySelector('#default-model'),
@@ -82,6 +95,9 @@ let brainCatalog = {};
 let brainKeys = {};
 let agentPacks = [];
 let editingAgentPack = null;
+let embeddingCatalog = {};
+let knowledgeDocuments = [];
+let canManageKnowledgeSettings = false;
 let authMode = 'login';
 const AGENT_LABELS = {
     Orchestrator: 'পরিকল্পনাকারী',
@@ -217,9 +233,11 @@ async function activateToken(token, displayName = '') {
     const userResponse = await apiRequest('/user');
     sessionStorage.setItem(TOKEN_STORAGE_KEY, apiToken);
     elements.accountName.textContent = displayName || userResponse.user.name;
+    canManageKnowledgeSettings = userResponse.user.can_manage_knowledge_settings === true;
     setConnected(true);
     await Promise.all([loadTasks(), loadApprovals()]);
     await loadAgentPacks();
+    await loadKnowledge();
 }
 
 function switchView(viewName) {
@@ -230,6 +248,7 @@ function switchView(viewName) {
         approvals: 'অনুমোদন',
         agents: 'এজেন্ট',
         brain: 'Brain ও routing',
+        knowledge: 'ফাইল ও Memory',
     };
 
     elements.views.forEach((view) => {
@@ -251,6 +270,10 @@ function switchView(viewName) {
     if (selectedView === 'agents' && apiToken) {
         loadAgentTrust().catch((error) => showNotice(elements.error, error.message));
         loadAgentPacks().catch((error) => showNotice(elements.error, error.message));
+    }
+
+    if (selectedView === 'knowledge' && apiToken) {
+        loadKnowledge().catch((error) => showNotice(elements.error, error.message));
     }
 }
 
@@ -863,6 +886,324 @@ async function loadAgentPacks() {
     }
 }
 
+function populateEmbeddingModels(selectedModel = '') {
+    const models = embeddingCatalog[elements.embeddingProvider.value]?.models || [];
+    elements.embeddingModel.innerHTML = models
+        .map((model) => `<option value="${escapeHtml(model)}">${escapeHtml(model)}</option>`)
+        .join('');
+    if (models.includes(selectedModel)) {
+        elements.embeddingModel.value = selectedModel;
+    }
+}
+
+function renderKnowledgeDocuments() {
+    const selectedTaskDocuments = new Set(
+        [...elements.taskKnowledgeDocuments.querySelectorAll('[data-task-knowledge-document]:checked')]
+            .map((input) => String(input.value)),
+    );
+    const readyDocuments = knowledgeDocuments.filter((document) => document.status === 1 && document.matches_embedding_settings);
+    elements.taskKnowledgeDocuments.innerHTML = readyDocuments.length
+        ? readyDocuments.map((document) => `<label class="task-knowledge-choice">
+            <input type="checkbox" value="${escapeHtml(document.id)}" data-task-knowledge-document ${selectedTaskDocuments.has(String(document.id)) ? 'checked' : ''}>
+            <span>${escapeHtml(document.original_name)}</span>
+        </label>`).join('')
+        : '<small>কোনো indexed ফাইল নেই।</small>';
+
+    if (knowledgeDocuments.length === 0) {
+        elements.knowledgeDocumentList.innerHTML = '<div class="empty-state">এখনো কোনো ফাইল যোগ করা হয়নি।</div>';
+        return;
+    }
+
+    elements.knowledgeDocumentList.innerHTML = knowledgeDocuments.map((document) => {
+        const status = {
+            0: 'প্রসেস হচ্ছে',
+            1: document.matches_embedding_settings ? 'Indexed' : 'Reindex প্রয়োজন',
+            2: `ব্যর্থ: ${escapeHtml(document.error_message || 'প্রসেস করা যায়নি')}`,
+        }[document.status] || 'অজানা';
+        const size = `${Math.max(1, Math.ceil(Number(document.size_bytes || 0) / 1024))} KB`;
+        const download = document.status === 1
+            ? `<a class="button button-quiet button-small" href="${API_BASE}/knowledge/documents/${encodeURIComponent(document.id)}/download" data-auth-download>ডাউনলোড</a>`
+            : '';
+        const reindex = document.status === 1 && !document.matches_embedding_settings
+            ? `<button class="button button-quiet button-small" type="button" data-reindex-document="${escapeHtml(document.id)}">Reindex</button>`
+            : '';
+
+        return `<article class="knowledge-item">
+            <label class="knowledge-document-choice">
+                <input type="checkbox" value="${escapeHtml(document.id)}" data-knowledge-document-select ${document.status === 1 && document.matches_embedding_settings ? '' : 'disabled'}>
+                <span><strong>${escapeHtml(document.original_name)}</strong><small>${size} · ${escapeHtml(document.chunk_count)} chunks · ${status}</small></span>
+            </label>
+            <div class="knowledge-item-actions">
+                ${download}
+                ${reindex}
+                <button class="button button-quiet button-small" type="button" data-delete-document="${escapeHtml(document.id)}">মুছুন</button>
+            </div>
+        </article>`;
+    }).join('');
+}
+
+function renderMemories(memories) {
+    elements.memoryList.innerHTML = memories.length
+        ? memories.map((memory) => `<article class="knowledge-item">
+            <div><strong>${escapeHtml(memory.label || (Number(memory.type) === 0 ? 'Short-term memory' : 'Long-term memory'))}</strong>
+                <small>${Number(memory.type) === 0 ? 'Short-term' : 'Long-term'}${memory.expires_at ? ` · মেয়াদ ${escapeHtml(formatDate(memory.expires_at))}` : ''}</small>
+                <p>${escapeHtml(memory.content)}</p></div>
+            <button class="button button-quiet button-small" type="button" data-delete-memory="${escapeHtml(memory.id)}">মুছুন</button>
+        </article>`).join('')
+        : '<div class="empty-state">এখনো কোনো memory সংরক্ষণ করা হয়নি।</div>';
+}
+
+async function loadKnowledge() {
+    if (!apiToken || !elements.knowledgeDocumentList) {
+        return;
+    }
+
+    const [embeddingData, documentData, memoryData] = await Promise.all([
+        apiRequest('/knowledge/embedding-settings'),
+        apiRequest('/knowledge/documents'),
+        apiRequest('/memories'),
+    ]);
+    embeddingCatalog = embeddingData.catalog || {};
+    const selectedProvider = embeddingData.settings?.provider || Object.keys(embeddingCatalog)[0] || '';
+    elements.embeddingProvider.innerHTML = Object.entries(embeddingCatalog)
+        .map(([provider, item]) => `<option value="${escapeHtml(provider)}">${escapeHtml(item.label)}</option>`)
+        .join('');
+    elements.embeddingProvider.value = selectedProvider;
+    populateEmbeddingModels(embeddingData.settings?.model || '');
+    elements.embeddingSettingsStatus.textContent = embeddingData.settings?.key_configured
+        ? `সংরক্ষিত: ${embeddingData.settings.provider}/${embeddingData.settings.model}`
+        : 'Embedding-এর আগে Brain-এ provider key সংরক্ষণ করুন।';
+
+    knowledgeDocuments = documentData.documents || [];
+    renderKnowledgeDocuments();
+    renderMemories(memoryData.memories || []);
+
+    if (canManageKnowledgeSettings) {
+        const settingsData = await apiRequest('/admin/knowledge-settings');
+        elements.knowledgeAdminSettings.hidden = false;
+        Object.entries(settingsData.settings).forEach(([name, value]) => {
+            const input = elements.knowledgeAdminSettingsForm.elements.namedItem(name);
+            if (input) {
+                input.value = value;
+            }
+        });
+    } else {
+        elements.knowledgeAdminSettings.hidden = true;
+    }
+}
+
+elements.knowledgeAdminSettingsForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const submitButton = elements.knowledgeAdminSettingsForm.querySelector('button[type="submit"]');
+    submitButton.disabled = true;
+    try {
+        const settings = Object.fromEntries(new FormData(elements.knowledgeAdminSettingsForm));
+        Object.keys(settings).forEach((key) => {
+            settings[key] = Number(settings[key]);
+        });
+        const responseData = await apiRequest('/admin/knowledge-settings', {
+            method: 'PUT',
+            body: JSON.stringify(settings),
+        });
+        Object.entries(responseData.settings).forEach(([name, value]) => {
+            elements.knowledgeAdminSettingsForm.elements.namedItem(name).value = value;
+        });
+        showNotice(elements.success, 'Knowledge processing settings সংরক্ষণ হয়েছে।');
+    } catch (error) {
+        showNotice(elements.error, error.message);
+    } finally {
+        submitButton.disabled = false;
+    }
+});
+
+elements.embeddingProvider.addEventListener('change', () => populateEmbeddingModels());
+elements.embeddingSettingsForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const submitButton = elements.embeddingSettingsForm.querySelector('button[type="submit"]');
+    submitButton.disabled = true;
+    try {
+        await apiRequest('/knowledge/embedding-settings', {
+            method: 'PUT',
+            body: JSON.stringify({
+                provider: elements.embeddingProvider.value,
+                model: elements.embeddingModel.value,
+            }),
+        });
+        await loadKnowledge();
+        showNotice(elements.success, 'Embedding settings সংরক্ষণ হয়েছে।');
+    } catch (error) {
+        showNotice(elements.error, error.message);
+    } finally {
+        submitButton.disabled = false;
+    }
+});
+
+elements.knowledgeUploadForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const submitButton = elements.knowledgeUploadForm.querySelector('button[type="submit"]');
+    submitButton.disabled = true;
+    try {
+        const responseData = await apiRequest('/knowledge/documents', {
+            method: 'POST',
+            body: new FormData(elements.knowledgeUploadForm),
+        });
+        elements.knowledgeUploadForm.reset();
+        await loadKnowledge();
+        showNotice(elements.success, `${responseData.document.original_name} private storage-এ indexed হয়েছে।`);
+    } catch (error) {
+        showNotice(elements.error, error.message);
+        await loadKnowledge();
+    } finally {
+        submitButton.disabled = false;
+    }
+});
+
+elements.knowledgeDocumentList.addEventListener('click', async (event) => {
+    const downloadLink = event.target.closest('[data-auth-download]');
+    if (downloadLink) {
+        event.preventDefault();
+        downloadLink.setAttribute('aria-disabled', 'true');
+        try {
+            const response = await fetch(downloadLink.href, {
+                headers: {
+                    Accept: 'application/octet-stream',
+                    Authorization: `Bearer ${apiToken}`,
+                },
+            });
+            if (!response.ok) {
+                const responseData = await response.json().catch(() => ({}));
+                throw new Error(responseData.message || `Download failed (${response.status}).`);
+            }
+            const documentId = Number(downloadLink.closest('.knowledge-item').querySelector('[data-knowledge-document-select]').value);
+            const filename = knowledgeDocuments.find((item) => Number(item.id) === documentId)?.original_name || 'document';
+            const objectUrl = URL.createObjectURL(await response.blob());
+            const temporaryLink = document.createElement('a');
+            temporaryLink.href = objectUrl;
+            temporaryLink.download = filename;
+            temporaryLink.click();
+            URL.revokeObjectURL(objectUrl);
+        } catch (error) {
+            showNotice(elements.error, error.message);
+        } finally {
+            downloadLink.removeAttribute('aria-disabled');
+        }
+        return;
+    }
+
+    const button = event.target.closest('[data-delete-document]');
+    const reindexButton = event.target.closest('[data-reindex-document]');
+    if (reindexButton) {
+        reindexButton.disabled = true;
+        try {
+            const responseData = await apiRequest(`/knowledge/documents/${encodeURIComponent(reindexButton.dataset.reindexDocument)}/reindex`, {
+                method: 'POST',
+            });
+            await loadKnowledge();
+            showNotice(elements.success, `${responseData.document.original_name} বর্তমান embedding model-এ reindex হয়েছে।`);
+        } catch (error) {
+            showNotice(elements.error, error.message);
+        } finally {
+            reindexButton.disabled = false;
+        }
+        return;
+    }
+
+    if (!button) {
+        return;
+    }
+
+    button.disabled = true;
+    try {
+        await apiRequest(`/knowledge/documents/${encodeURIComponent(button.dataset.deleteDocument)}`, { method: 'DELETE' });
+        await loadKnowledge();
+        showNotice(elements.success, 'ফাইল ও indexed text মুছে দেওয়া হয়েছে।');
+    } catch (error) {
+        showNotice(elements.error, error.message);
+    } finally {
+        button.disabled = false;
+    }
+});
+
+elements.knowledgeSearchForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const formData = new FormData(elements.knowledgeSearchForm);
+    const documentIds = [...elements.knowledgeDocumentList.querySelectorAll('[data-knowledge-document-select:checked]')]
+        .map((input) => Number(input.value));
+    const submitButton = elements.knowledgeSearchForm.querySelector('button[type="submit"]');
+    submitButton.disabled = true;
+    try {
+        const responseData = await apiRequest('/knowledge/search', {
+            method: 'POST',
+            body: JSON.stringify({
+                query: String(formData.get('query') || '').trim(),
+                document_ids: documentIds,
+                limit: 5,
+            }),
+        });
+        elements.knowledgeSearchResults.innerHTML = responseData.results.length
+            ? responseData.results.map((result) => `<article class="knowledge-search-result">
+                <p>${escapeHtml(result.content)}</p>
+                <small>Source: ${escapeHtml(result.source.name)} · chunk ${escapeHtml(result.source.chunk)} · relevance ${escapeHtml(result.relevance)}</small>
+            </article>`).join('')
+            : '<div class="empty-state">কোনো indexed ফাইলে প্রাসঙ্গিক অংশ পাওয়া যায়নি।</div>';
+    } catch (error) {
+        showNotice(elements.error, error.message);
+    } finally {
+        submitButton.disabled = false;
+    }
+});
+
+elements.memoryForm.elements.type.addEventListener('change', () => {
+    const expiry = elements.memoryForm.elements.expires_in_days;
+    expiry.required = elements.memoryForm.elements.type.value === '0';
+    expiry.disabled = elements.memoryForm.elements.type.value !== '0';
+});
+elements.memoryForm.elements.type.dispatchEvent(new Event('change'));
+elements.memoryForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const formData = new FormData(elements.memoryForm);
+    const expiresInDays = String(formData.get('expires_in_days') || '').trim();
+    const submitButton = elements.memoryForm.querySelector('button[type="submit"]');
+    submitButton.disabled = true;
+    try {
+        await apiRequest('/memories', {
+            method: 'POST',
+            body: JSON.stringify({
+                type: Number(formData.get('type')),
+                label: String(formData.get('label') || '').trim() || null,
+                content: String(formData.get('content') || '').trim(),
+                expires_in_days: expiresInDays === '' ? null : Number(expiresInDays),
+            }),
+        });
+        elements.memoryForm.reset();
+        elements.memoryForm.elements.type.dispatchEvent(new Event('change'));
+        await loadKnowledge();
+        showNotice(elements.success, 'Memory সংরক্ষণ হয়েছে।');
+    } catch (error) {
+        showNotice(elements.error, error.message);
+    } finally {
+        submitButton.disabled = false;
+    }
+});
+
+elements.memoryList.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-delete-memory]');
+    if (!button) {
+        return;
+    }
+
+    button.disabled = true;
+    try {
+        await apiRequest(`/memories/${encodeURIComponent(button.dataset.deleteMemory)}`, { method: 'DELETE' });
+        await loadKnowledge();
+        showNotice(elements.success, 'Memory মুছে দেওয়া হয়েছে।');
+    } catch (error) {
+        showNotice(elements.error, error.message);
+    } finally {
+        button.disabled = false;
+    }
+});
+
 function populateAgentPackForm(pack) {
     editingAgentPack = pack ? { slug: pack.slug, version: pack.version } : null;
     const form = elements.agentPackForm;
@@ -1298,16 +1639,21 @@ elements.authForm.addEventListener('submit', async (event) => {
 
 async function clearSession() {
     apiToken = '';
+    canManageKnowledgeSettings = false;
     selectedTaskId = null;
     sessionStorage.removeItem(TOKEN_STORAGE_KEY);
     window.clearTimeout(refreshTimer);
     setConnected(false);
     renderTaskList([]);
+    elements.knowledgeAdminSettings.hidden = true;
     elements.taskList.innerHTML = '<div class="empty-state">কাজ দেখতে API token দিয়ে সংযুক্ত করুন।</div>';
     elements.taskDetail.innerHTML = '<div class="empty-state"><strong>একটি কাজ নির্বাচন করুন</strong><span>কাজের ধাপ ও agent-এর ফলাফল এখানে দেখা যাবে।</span></div>';
     elements.approvalList.innerHTML = '<div class="panel empty-state">অনুমোদন দেখতে API token দিয়ে সংযুক্ত করুন।</div>';
     agentPacks = [];
     renderAgentPacks();
+    knowledgeDocuments = [];
+    elements.knowledgeDocumentList.innerHTML = '<div class="empty-state">ফাইল দেখতে API token দিয়ে সংযুক্ত করুন।</div>';
+    elements.memoryList.innerHTML = '<div class="empty-state">Memory দেখতে API token দিয়ে সংযুক্ত করুন।</div>';
     setApprovalCount(0);
     clearNotices();
 }
@@ -1338,6 +1684,8 @@ elements.taskForm.addEventListener('submit', async (event) => {
         prompt: String(formData.get('prompt') || '').trim(),
         success_criteria: successCriteria,
         agent_pack: String(formData.get('agent_pack') || '') || null,
+        knowledge_document_ids: [...elements.taskKnowledgeDocuments.querySelectorAll('[data-task-knowledge-document]:checked')]
+            .map((input) => Number(input.value)),
         max_cost: String(formData.get('max_cost') || '').trim() === ''
             ? null
             : Number(formData.get('max_cost')),
@@ -1350,6 +1698,7 @@ elements.taskForm.addEventListener('submit', async (event) => {
             && pendingTaskConfirmation.prompt === taskData.prompt
             && JSON.stringify(pendingTaskConfirmation.success_criteria) === JSON.stringify(taskData.success_criteria)
             && pendingTaskConfirmation.agent_pack === taskData.agent_pack
+            && JSON.stringify(pendingTaskConfirmation.knowledge_document_ids) === JSON.stringify(taskData.knowledge_document_ids)
             && pendingTaskConfirmation.max_cost === taskData.max_cost;
         if (!isCurrentEstimateConfirmed) {
             const estimateResponse = await apiRequest('/tasks/estimate', {
@@ -1358,18 +1707,23 @@ elements.taskForm.addEventListener('submit', async (event) => {
                     prompt: taskData.prompt,
                     max_cost: taskData.max_cost,
                     agent_pack: taskData.agent_pack,
+                    knowledge_document_ids: taskData.knowledge_document_ids,
                 }),
             });
             renderTaskEstimate(estimateResponse);
             pendingTaskConfirmation = estimateResponse.cost_estimate.can_complete === false
                 ? null
-                : taskData;
+                : {
+                    ...taskData,
+                    knowledge_context_token: estimateResponse.knowledge_preview?.token || null,
+                };
             submitButton.innerHTML = estimateResponse.cost_estimate.can_complete === false
                 ? 'সীমার বাইরে — prompt ছোট করুন'
                 : 'অনুমান দেখে শুরু করুন <span aria-hidden="true">→</span>';
             return;
         }
 
+        taskData.knowledge_context_token = pendingTaskConfirmation.knowledge_context_token;
         const responseData = await apiRequest('/tasks', {
             method: 'POST',
             body: JSON.stringify(taskData),
@@ -1420,6 +1774,9 @@ function renderTaskEstimate(responseData) {
 
     elements.taskEstimate.textContent = [
         `পথ: ${routing.strategy === 'multi_agent' ? 'একাধিক agent' : 'একটি agent'} (${routing.agent_sequence.join(' → ')})`,
+        responseData.knowledge_preview?.sources?.length
+            ? `Selected file context: ${responseData.knowledge_preview.sources.map((source) => `${source.name} (chunk ${source.chunk})`).join(', ')}`
+            : '',
         `কেন: ${routing.reason}`,
         `সর্বোচ্চ token: ${costEstimate.estimated_tokens ?? 'হিসাব করা যায়নি'} / ${costEstimate.maximum_tokens}`,
         costEstimate.can_complete === false

@@ -42,5 +42,10 @@ class DatabaseSeeder extends Seeder
             ['display_name' => 'Manage agent packs', 'module' => 1],
         );
         $adminRole->givePermissionTo($agentPacksPermission);
+        $knowledgeSettingsPermission = Permission::query()->firstOrCreate(
+            ['name' => 'knowledge_settings.manage', 'guard_name' => 'web'],
+            ['display_name' => 'Manage Knowledge processing settings', 'module' => 1],
+        );
+        $adminRole->givePermissionTo($knowledgeSettingsPermission);
     }
 }

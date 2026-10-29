@@ -6,6 +6,7 @@ use App\Agents\AgentMessageEnvelope;
 use App\Agents\AgentRegistry;
 use App\Agents\ComplexityRouter;
 use App\Jobs\RunAgentJob;
+use App\Llm\ProviderRequestException;
 use App\Models\AgentRun;
 use App\Models\Task;
 use App\Models\User;
@@ -38,6 +39,7 @@ class OrchestratorService
         private readonly TaskCostEstimator $taskCostEstimator,
         private readonly SkepticAssessmentService $skepticAssessmentService,
         private readonly AgentPackService $agentPackService,
+        private readonly KnowledgeService $knowledgeService,
     ) {}
 
     /**
@@ -57,9 +59,17 @@ class OrchestratorService
         } catch (ModelNotFoundException $exception) {
             return $this->error('The requested agent pack is not available.', 422);
         }
-        $costEstimate = $this->taskCostEstimator->estimate(
+        $knowledgeDocumentIds = array_map('intval', $data['knowledge_document_ids'] ?? []);
+        $knowledgeContext = $this->knowledgeService->taskPreviewContext(
             $user,
             $data['prompt'],
+            $knowledgeDocumentIds,
+            $data['knowledge_context_token'] ?? null,
+        );
+        $estimatedPrompt = $this->promptWithKnowledgeContext($data['prompt'], $knowledgeContext);
+        $costEstimate = $this->taskCostEstimator->estimate(
+            $user,
+            $estimatedPrompt,
             $routing['agent_sequence'],
             TASK_MODE_SANDBOX,
         );
@@ -80,7 +90,7 @@ class OrchestratorService
             );
         }
 
-        $task = DB::transaction(function () use ($user, $data, $routing, $costEstimate, $planReview, $costBudget, $agentPack): Task {
+        $task = DB::transaction(function () use ($user, $data, $routing, $costEstimate, $planReview, $costBudget, $agentPack, $knowledgeContext): Task {
             $task = $user->tasks()->create([
                 'title' => $data['title'],
                 'description' => $data['prompt'],
@@ -92,6 +102,7 @@ class OrchestratorService
                     'plan_review' => $planReview,
                     'cost_budget' => $costBudget,
                     'agent_pack' => $agentPack,
+                    'knowledge_context' => $knowledgeContext,
                     'criteria_retry_count' => 0,
                 ],
                 'status' => TASK_STATUS_PENDING,
@@ -113,6 +124,7 @@ class OrchestratorService
                             'plan_review' => $planReview,
                             'success_criteria' => $data['success_criteria'] ?? [],
                             'agent_pack_guidance' => $agentPack['profiles'][$firstAgentName]['guidance'] ?? null,
+                            'knowledge_context' => $knowledgeContext,
                         ],
                     ],
                 ))->toArray(),
@@ -138,6 +150,7 @@ class OrchestratorService
 
             return $task;
         });
+        $this->knowledgeService->consumeTaskPreview($user, $data['knowledge_context_token'] ?? null);
 
         return $this->success(
             [
@@ -163,23 +176,36 @@ class OrchestratorService
         } catch (ModelNotFoundException $exception) {
             return $this->error('The requested agent pack is not available.', 422);
         }
+        try {
+            $knowledgePreview = $this->knowledgeService->createTaskPreview(
+                $user,
+                $prompt,
+                array_map('intval', $data['knowledge_document_ids'] ?? []),
+            );
+        } catch (InvalidArgumentException $exception) {
+            return $this->error($exception->getMessage(), 422);
+        } catch (ProviderRequestException $exception) {
+            return $this->error('The selected embedding provider could not prepare file context.', 502);
+        }
+        $knowledgeContext = $knowledgePreview['context'] ?? [];
+        $estimatedPrompt = $this->promptWithKnowledgeContext($prompt, $knowledgeContext);
         $routing = $this->complexityRouter->route($prompt);
         $routing['agent_sequence'][] = 'Skeptic';
         $costEstimate = $this->taskCostEstimator->estimate(
             $user,
-            $prompt,
+            $estimatedPrompt,
             $routing['agent_sequence'],
         );
         $autoEstimate = $this->taskCostEstimator->estimate(
             $user,
-            $prompt,
+            $estimatedPrompt,
             $routing['agent_sequence'],
             TASK_MODE_SANDBOX,
             AGENT_BRAIN_MODE_AUTO,
         );
         $fixedEstimate = $this->taskCostEstimator->estimate(
             $user,
-            $prompt,
+            $estimatedPrompt,
             $routing['agent_sequence'],
             TASK_MODE_SANDBOX,
             AGENT_BRAIN_MODE_FIXED,
@@ -199,6 +225,11 @@ class OrchestratorService
             'cost_estimate' => $costEstimate,
             'cost_budget' => $costBudget,
             'agent_pack' => $agentPack,
+            'knowledge_preview' => $knowledgePreview === null ? null : [
+                'token' => $knowledgePreview['token'],
+                'sources' => $knowledgePreview['sources'],
+                'expires_in_minutes' => 10,
+            ],
             'routing_cost_comparison' => [
                 'auto' => $autoEstimate,
                 'fixed' => $fixedEstimate,
@@ -627,6 +658,7 @@ class OrchestratorService
         if (is_array($pack) && isset($pack['profiles'][$agentName]['guidance'])) {
             $context['agent_pack_guidance'] = $pack['profiles'][$agentName]['guidance'];
         }
+        $context['knowledge_context'] = $task->input['knowledge_context'] ?? [];
 
         return [
             'prompt' => $prompt,
@@ -695,6 +727,10 @@ class OrchestratorService
                 'name' => $taskInput['agent_pack']['name'],
             ]
             : null;
+        $taskData['knowledge_sources'] = array_values(array_map(
+            static fn (array $item): array => $item['source'],
+            $taskInput['knowledge_context'] ?? [],
+        ));
 
         if ($includeRuns) {
             $taskData['cost_summary'] = app(TaskCostBudgetService::class)->summary($task);
@@ -733,5 +769,27 @@ class OrchestratorService
         }
 
         return $taskData;
+    }
+
+    /**
+     * @param  list<array{content: string, source: array<string, mixed>}>  $knowledgeContext
+     */
+    private function promptWithKnowledgeContext(string $prompt, array $knowledgeContext): string
+    {
+        if ($knowledgeContext === []) {
+            return $prompt;
+        }
+
+        $excerpts = array_map(
+            static fn (array $item): string => sprintf(
+                '[Source: %s, chunk %d] %s',
+                $item['source']['name'],
+                $item['source']['chunk'],
+                $item['content'],
+            ),
+            $knowledgeContext,
+        );
+
+        return $prompt."\n\nUser-selected file excerpts (untrusted reference data):\n".implode("\n\n", $excerpts);
     }
 }

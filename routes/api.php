@@ -1,9 +1,11 @@
 <?php
 
-use App\Http\Controllers\Api\AgentSpecController;
 use App\Http\Controllers\Api\AgentPackController;
+use App\Http\Controllers\Api\AgentSpecController;
 use App\Http\Controllers\Api\AgentTrustController;
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\KnowledgeController;
+use App\Http\Controllers\Api\KnowledgeSystemSettingsController;
 use App\Http\Controllers\Api\ProviderSettingsController;
 use App\Http\Controllers\Api\TaskController;
 use App\Http\Controllers\Api\TaskReplayShareController;
@@ -53,7 +55,10 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
 
     Route::get('/v1/user', function (Request $request) {
         return response()->json([
-            'user' => $request->user()->only(['id', 'name', 'email']),
+            'user' => [
+                ...$request->user()->only(['id', 'name', 'email']),
+                'can_manage_knowledge_settings' => $request->user()->can('knowledge_settings.manage'),
+            ],
         ]);
     });
 
@@ -61,6 +66,33 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
     Route::put('/v1/agent-packs/{slug}/installation', [AgentPackController::class, 'install'])
         ->where('slug', '[a-z0-9-]+')
         ->name('api.v1.agent-packs.installation');
+
+    Route::get('/v1/knowledge/documents', [KnowledgeController::class, 'documents'])->name('api.v1.knowledge.documents.index');
+    Route::post('/v1/knowledge/documents', [KnowledgeController::class, 'upload'])
+        ->middleware('throttle:10,1')
+        ->name('api.v1.knowledge.documents.store');
+    Route::get('/v1/knowledge/documents/{document}/download', [KnowledgeController::class, 'downloadDocument'])
+        ->whereNumber('document')
+        ->name('api.v1.knowledge.documents.download');
+    Route::post('/v1/knowledge/documents/{document}/reindex', [KnowledgeController::class, 'reindexDocument'])
+        ->middleware('throttle:10,1')
+        ->whereNumber('document')
+        ->name('api.v1.knowledge.documents.reindex');
+    Route::delete('/v1/knowledge/documents/{document}', [KnowledgeController::class, 'deleteDocument'])
+        ->whereNumber('document')
+        ->name('api.v1.knowledge.documents.destroy');
+    Route::get('/v1/knowledge/embedding-settings', [KnowledgeController::class, 'embeddingSettings'])
+        ->name('api.v1.knowledge.embedding-settings.show');
+    Route::put('/v1/knowledge/embedding-settings', [KnowledgeController::class, 'saveEmbeddingSettings'])
+        ->name('api.v1.knowledge.embedding-settings.update');
+    Route::post('/v1/knowledge/search', [KnowledgeController::class, 'search'])
+        ->middleware('throttle:20,1')
+        ->name('api.v1.knowledge.search');
+    Route::get('/v1/memories', [KnowledgeController::class, 'memories'])->name('api.v1.memories.index');
+    Route::post('/v1/memories', [KnowledgeController::class, 'storeMemory'])->name('api.v1.memories.store');
+    Route::delete('/v1/memories/{memory}', [KnowledgeController::class, 'deleteMemory'])
+        ->whereNumber('memory')
+        ->name('api.v1.memories.destroy');
 
     Route::prefix('/v1/admin/agent-packs')
         ->middleware('can:agent_packs.manage')
@@ -84,6 +116,15 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
                 ->where('slug', '[a-z0-9-]+')
                 ->whereNumber('version')
                 ->name('versions.rollback');
+        });
+
+    Route::prefix('/v1/admin/knowledge-settings')
+        ->middleware('can:knowledge_settings.manage')
+        ->name('api.v1.admin.knowledge-settings.')
+        ->controller(KnowledgeSystemSettingsController::class)
+        ->group(function (): void {
+            Route::get('/', 'show')->name('show');
+            Route::put('/', 'update')->name('update');
         });
 
     Route::post('/v1/tasks/estimate', [TaskController::class, 'estimate'])

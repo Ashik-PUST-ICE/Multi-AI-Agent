@@ -52,7 +52,7 @@ class TaskCostEstimator
         $maximumTokens = $this->maximumTaskTokens($mode);
         $remainingTaskTokens = $maximumTokens;
 
-        foreach ($agentSequence as $agentName) {
+        foreach ($agentSequence as $agentIndex => $agentName) {
             $agentSpecification = $this->agentRegistry->activeSpec($agentName);
             try {
                 $modelSelection = $this->providerResolver->selectedModel(
@@ -78,10 +78,9 @@ class TaskCostEstimator
             $modelKey = $this->modelKey($modelSelection['provider'], $modelSelection['model']);
             $pricing = $modelPricing[$modelKey] ?? null;
             $estimatedInputTokens = $this->estimatedInputTokens($prompt);
-            $maximumAgentTokens = min(
-                (int) ($agentSpecification['max_tokens'] ?? 2000),
-                $remainingTaskTokens,
-            );
+            $agentsRemaining = count($agentSequence) - $agentIndex;
+            $agentTokenShare = (int) ceil($remainingTaskTokens / max(1, $agentsRemaining));
+            $maximumAgentTokens = min((int) ($agentSpecification['max_tokens'] ?? 2000), $agentTokenShare);
             $canCompleteAgent = $maximumAgentTokens > $estimatedInputTokens;
 
             if (! $canCompleteAgent) {

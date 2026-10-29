@@ -24,6 +24,8 @@ class UserLlmSetting extends Model
         'budget_currency',
         'agent_brains',
         'routing_policy',
+        'embedding_provider',
+        'embedding_model',
     ];
 
     protected function casts(): array
@@ -35,6 +37,8 @@ class UserLlmSetting extends Model
             'max_task_cost' => 'float',
             'agent_brains' => 'array',
             'routing_policy' => 'string',
+            'embedding_provider' => 'string',
+            'embedding_model' => 'string',
         ];
     }
 
