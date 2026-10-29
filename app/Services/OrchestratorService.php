@@ -11,6 +11,7 @@ use App\Models\Task;
 use App\Models\User;
 use App\Traits\ResponseTrait;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
@@ -36,6 +37,7 @@ class OrchestratorService
         private readonly ComplexityRouter $complexityRouter,
         private readonly TaskCostEstimator $taskCostEstimator,
         private readonly SkepticAssessmentService $skepticAssessmentService,
+        private readonly AgentPackService $agentPackService,
     ) {}
 
     /**
@@ -45,12 +47,31 @@ class OrchestratorService
     {
         $routing = $this->complexityRouter->route($data['prompt']);
         $routing['agent_sequence'][] = 'Skeptic';
+        $planReview = $data['plan_review'] ?? [
+            'required' => false,
+            'status' => 'pending',
+            'notes' => null,
+        ];
+        try {
+            $agentPack = $this->agentPackService->enabledPack($user, $data['agent_pack'] ?? null);
+        } catch (ModelNotFoundException $exception) {
+            return $this->error('The requested agent pack is not available.', 422);
+        }
         $costEstimate = $this->taskCostEstimator->estimate(
             $user,
             $data['prompt'],
             $routing['agent_sequence'],
             TASK_MODE_SANDBOX,
         );
+        try {
+            $costBudget = app(TaskCostBudgetService::class)->validateSubmission(
+                $user,
+                $costEstimate,
+                isset($data['max_cost']) ? (float) $data['max_cost'] : null,
+            );
+        } catch (InvalidArgumentException $exception) {
+            return $this->error($exception->getMessage(), 422);
+        }
 
         if (($costEstimate['can_complete'] ?? true) === false) {
             return $this->error(
@@ -59,7 +80,7 @@ class OrchestratorService
             );
         }
 
-        $task = DB::transaction(function () use ($user, $data, $routing, $costEstimate): Task {
+        $task = DB::transaction(function () use ($user, $data, $routing, $costEstimate, $planReview, $costBudget, $agentPack): Task {
             $task = $user->tasks()->create([
                 'title' => $data['title'],
                 'description' => $data['prompt'],
@@ -68,23 +89,31 @@ class OrchestratorService
                     'routing' => $routing,
                     'cost_estimate' => $costEstimate,
                     'success_criteria' => $data['success_criteria'] ?? [],
+                    'plan_review' => $planReview,
+                    'cost_budget' => $costBudget,
+                    'agent_pack' => $agentPack,
                     'criteria_retry_count' => 0,
                 ],
                 'status' => TASK_STATUS_PENDING,
                 'mode' => TASK_MODE_SANDBOX,
             ]);
 
+            $firstAgentName = $routing['agent_sequence'][0];
             $firstAgentRun = $task->agentRuns()->create([
-                'agent_name' => $routing['agent_sequence'][0],
+                'agent_name' => $firstAgentName,
                 'mode' => $task->mode,
                 'input' => (new AgentMessageEnvelope(
                     'user',
-                    $routing['agent_sequence'][0],
+                    $firstAgentName,
                     $task->id,
                     'task.created',
                     [
                         'prompt' => $data['prompt'],
-                        'context' => [],
+                        'context' => [
+                            'plan_review' => $planReview,
+                            'success_criteria' => $data['success_criteria'] ?? [],
+                            'agent_pack_guidance' => $agentPack['profiles'][$firstAgentName]['guidance'] ?? null,
+                        ],
                     ],
                 ))->toArray(),
                 'status' => AGENT_RUN_STATUS_PENDING,
@@ -114,14 +143,26 @@ class OrchestratorService
             [
                 'task' => $this->taskData($task),
                 'cost_estimate' => $costEstimate,
+                'cost_budget' => $costBudget,
+                'plan_review' => $planReview,
+                'agent_pack' => $agentPack,
             ],
             CREATED_SUCCESSFULLY,
             202,
         );
     }
 
-    public function estimate(User $user, string $prompt): JsonResponse
+    /**
+     * @param  array{prompt: string, max_cost?: numeric-string|float|int|null}  $data
+     */
+    public function estimate(User $user, array $data): JsonResponse
     {
+        $prompt = $data['prompt'];
+        try {
+            $agentPack = $this->agentPackService->enabledPack($user, $data['agent_pack'] ?? null);
+        } catch (ModelNotFoundException $exception) {
+            return $this->error('The requested agent pack is not available.', 422);
+        }
         $routing = $this->complexityRouter->route($prompt);
         $routing['agent_sequence'][] = 'Skeptic';
         $costEstimate = $this->taskCostEstimator->estimate(
@@ -143,10 +184,21 @@ class OrchestratorService
             TASK_MODE_SANDBOX,
             AGENT_BRAIN_MODE_FIXED,
         );
+        try {
+            $costBudget = app(TaskCostBudgetService::class)->validateSubmission(
+                $user,
+                $costEstimate,
+                isset($data['max_cost']) ? (float) $data['max_cost'] : null,
+            );
+        } catch (InvalidArgumentException $exception) {
+            return $this->error($exception->getMessage(), 422);
+        }
 
         return $this->success([
             'routing' => $routing,
             'cost_estimate' => $costEstimate,
+            'cost_budget' => $costBudget,
+            'agent_pack' => $agentPack,
             'routing_cost_comparison' => [
                 'auto' => $autoEstimate,
                 'fixed' => $fixedEstimate,
@@ -167,7 +219,10 @@ class OrchestratorService
             ->findOrFail($taskId);
         Gate::forUser($user)->authorize('view', $task);
 
-        return $this->success(['task' => $this->taskData($task, true)]);
+        $taskData = $this->taskData($task, true);
+        $taskData['check_in'] = app(TaskCheckInService::class)->evaluate($task);
+
+        return $this->success(['task' => $taskData]);
     }
 
     public function replay(User $user, int $taskId): JsonResponse
@@ -209,6 +264,7 @@ class OrchestratorService
             'replay_mode' => TASK_MODE_SANDBOX,
             'read_only' => true,
             'events' => $events,
+            'check_in' => app(TaskCheckInService::class)->evaluate($task),
         ]);
     }
 
@@ -317,7 +373,12 @@ class OrchestratorService
 
         return $this->success([
             'tasks' => $tasks->getCollection()
-                ->map(fn (Task $task): array => $this->taskData($task))
+                ->map(function (Task $task): array {
+                    $data = $this->taskData($task);
+                    $data['check_in'] = app(TaskCheckInService::class)->evaluate($task);
+
+                    return $data;
+                })
                 ->all(),
             'pagination' => [
                 'current_page' => $tasks->currentPage(),
@@ -336,6 +397,19 @@ class OrchestratorService
         DB::transaction(function () use ($agentRunId, $output): void {
             $agentRun = AgentRun::with('task')->findOrFail($agentRunId);
             $task = $agentRun->task;
+
+            $taskCheckIn = app(TaskCheckInService::class)->evaluate($task);
+            if ($taskCheckIn['status'] === 'needs_plan_review') {
+                $task->update([
+                    'status' => TASK_STATUS_PENDING,
+                ]);
+                $this->recordTaskEvent($agentRun, $task, 'task.plan_review_required', [
+                    'status' => 'pending',
+                    'reason' => $taskCheckIn['reason'],
+                ]);
+
+                return;
+            }
 
             if ($task === null) {
                 throw new RuntimeException('The task for this agent run could not be found.');
@@ -549,6 +623,10 @@ class OrchestratorService
             ],
             default => throw new InvalidArgumentException("Agent [{$agentName}] cannot be dispatched by the orchestrator."),
         };
+        $pack = $task->input['agent_pack'] ?? null;
+        if (is_array($pack) && isset($pack['profiles'][$agentName]['guidance'])) {
+            $context['agent_pack_guidance'] = $pack['profiles'][$agentName]['guidance'];
+        }
 
         return [
             'prompt' => $prompt,
@@ -609,8 +687,17 @@ class OrchestratorService
         $taskInput = $task->input ?? [];
         $taskData['routing'] = $taskInput['routing'] ?? null;
         $taskData['cost_estimate'] = $taskInput['cost_estimate'] ?? null;
+        $taskData['cost_budget'] = $taskInput['cost_budget'] ?? null;
+        $taskData['agent_pack'] = isset($taskInput['agent_pack'])
+            ? [
+                'slug' => $taskInput['agent_pack']['slug'],
+                'version' => $taskInput['agent_pack']['version'],
+                'name' => $taskInput['agent_pack']['name'],
+            ]
+            : null;
 
         if ($includeRuns) {
+            $taskData['cost_summary'] = app(TaskCostBudgetService::class)->summary($task);
             $taskData['agent_runs'] = $task->agentRuns->map(static fn (AgentRun $agentRun): array => $agentRun->only([
                 'id',
                 'agent_name',

@@ -9,6 +9,12 @@ const STATUS_LABELS = {
     3: 'ব্যর্থ',
 };
 const AGENT_SEQUENCE = ['Orchestrator', 'Research', 'Writer', 'Reviewer'];
+const AGENT_PACK_STATUS = { DRAFT: 0, ACTIVE: 1, RETIRED: 2 };
+const AGENT_PACK_STATUS_LABELS = {
+    [AGENT_PACK_STATUS.DRAFT]: 'Draft',
+    [AGENT_PACK_STATUS.ACTIVE]: 'Active',
+    [AGENT_PACK_STATUS.RETIRED]: 'Retired',
+};
 
 const elements = {
     approvalCount: document.querySelector('#approval-count'),
@@ -31,12 +37,20 @@ const elements = {
     agentDirectory: document.querySelector('#agent-directory'),
     agentTrustList: document.querySelector('#agent-trust-list'),
     agentBrainGrid: document.querySelector('#agent-brain-grid'),
+    agentPackList: document.querySelector('#agent-pack-list'),
+    agentPackSelect: document.querySelector('#task-agent-pack'),
+    agentPackAdmin: document.querySelector('#agent-pack-admin'),
+    agentPackAdminList: document.querySelector('#agent-pack-admin-list'),
+    agentPackForm: document.querySelector('#agent-pack-form'),
+    agentPackFormStatus: document.querySelector('#agent-pack-form-status'),
     brainSettingsForm: document.querySelector('#brain-settings-form'),
     defaultProvider: document.querySelector('#default-provider'),
     defaultModel: document.querySelector('#default-model'),
     fallbackProvider: document.querySelector('#fallback-provider'),
     fallbackModel: document.querySelector('#fallback-model'),
     routingPolicy: document.querySelector('#routing-policy'),
+    maxTaskCost: document.querySelector('#max-task-cost'),
+    budgetCurrency: document.querySelector('#budget-currency'),
     modelCatalog: document.querySelector('#model-catalog'),
     providerKeyList: document.querySelector('#provider-key-list'),
     connectionForm: document.querySelector('#connection-form'),
@@ -50,6 +64,7 @@ const elements = {
     taskEstimate: document.querySelector('#task-estimate'),
     taskDetail: document.querySelector('#task-detail'),
     taskForm: document.querySelector('#task-form'),
+    taskMaxCost: document.querySelector('#task-max-cost'),
     taskList: document.querySelector('#task-list'),
     tokenInput: document.querySelector('#api-token'),
     views: document.querySelectorAll('.view-panel'),
@@ -65,6 +80,8 @@ let pendingTaskConfirmation = null;
 let brainSettings = null;
 let brainCatalog = {};
 let brainKeys = {};
+let agentPacks = [];
+let editingAgentPack = null;
 let authMode = 'login';
 const AGENT_LABELS = {
     Orchestrator: 'পরিকল্পনাকারী',
@@ -202,6 +219,7 @@ async function activateToken(token, displayName = '') {
     elements.accountName.textContent = displayName || userResponse.user.name;
     setConnected(true);
     await Promise.all([loadTasks(), loadApprovals()]);
+    await loadAgentPacks();
 }
 
 function switchView(viewName) {
@@ -232,6 +250,7 @@ function switchView(viewName) {
 
     if (selectedView === 'agents' && apiToken) {
         loadAgentTrust().catch((error) => showNotice(elements.error, error.message));
+        loadAgentPacks().catch((error) => showNotice(elements.error, error.message));
     }
 }
 
@@ -298,6 +317,18 @@ function renderTaskDetail(task) {
     const usageSummary = tokenUsage > 0
         ? `<p class="usage-summary">Token usage: ${escapeHtml(tokenUsage.toLocaleString())}</p>`
         : '';
+    const spentByCurrency = Object.entries(task.cost_summary?.spent_by_currency || {})
+        .map(([currency, amount]) => `${amount} ${currency}`)
+        .join(', ');
+    const costLimitSummary = task.cost_budget
+        ? ` · Limit: ${task.cost_budget.maximum_cost} ${task.cost_budget.currency}`
+        : '';
+    const costSummary = task.cost_summary
+        ? `<p class="usage-summary">Estimated-rate spend: ${escapeHtml(spentByCurrency || 'এখনো কোনো provider call record হয়নি')}${escapeHtml(costLimitSummary)} · ${escapeHtml(task.cost_summary.priced_call_count)} priced calls${task.cost_summary.unpriced_call_count ? ` · ${escapeHtml(task.cost_summary.unpriced_call_count)} unpriced calls` : ''}</p>`
+        : '';
+    const checkInSummary = task.check_in
+        ? `<div class="notice ${task.check_in.severity === 'warning' ? 'notice-error' : 'notice-info'}" role="status">${escapeHtml(task.check_in.reason)}</div>`
+        : '';
     const confidence = task.result?.confidence;
     const confidenceSummary = Number.isInteger(confidence?.score)
         ? `<section class="confidence-card"><strong>Confidence: ${escapeHtml(confidence.score)}%</strong><span>${escapeHtml(confidence.rationale)}</span><span>চিহ্নিত উৎস: ${escapeHtml(confidence.source_count)}</span></section>`
@@ -355,10 +386,12 @@ function renderTaskDetail(task) {
             <span class="status-chip status-${escapeHtml(task.status)}">${escapeHtml(statusLabel(task.status))}</span>
         </div>
         <div class="task-mode-actions">${modeActions.join('')}</div>
+        ${checkInSummary}
         <div class="agent-timeline">${renderAgentRuns(task.agent_runs || [], task.routing)}</div>
         ${routingDetails ? `<section class="routing-reasons"><strong>কেন এই model</strong>${routingDetails}</section>` : ''}
         ${sharePanel}
         ${usageSummary}
+        ${costSummary}
         ${confidenceSummary}
         ${criteriaPanel}
         ${findingsPanel}
@@ -554,6 +587,8 @@ function approvedOptions(selectedKey = '') {
 }
 
 function renderBrainSelectors(overrides = {}) {
+    elements.maxTaskCost.value = brainSettings?.max_task_cost ?? '';
+    elements.budgetCurrency.value = brainSettings?.budget_currency ?? '';
     const approvedModels = approvedModelChoices();
     const approvedProviderIds = [...new Set(approvedModels.map((model) => model.provider))];
     const previousProvider = overrides.provider || elements.defaultProvider.value || brainSettings?.provider || '';
@@ -757,6 +792,200 @@ async function loadBrainSettings() {
     renderAgentDirectory();
 }
 
+function renderAgentPacks() {
+    if (!elements.agentPackList) {
+        return;
+    }
+
+    elements.agentPackList.innerHTML = agentPacks.length
+        ? agentPacks.map((pack) => `
+            <article class="agent-pack-card">
+                <div>
+                    <h4>${escapeHtml(pack.name)}</h4>
+                    <p>${escapeHtml(pack.description)}</p>
+                    <small>v${escapeHtml(pack.version)} · ${pack.agents.map(escapeHtml).join(', ')}</small>
+                </div>
+                <button class="button button-quiet button-small" type="button"
+                    data-pack-install="${escapeHtml(pack.slug)}"
+                    data-pack-enabled="${pack.enabled ? 'true' : 'false'}"
+                    data-pack-installed="${pack.installed ? 'true' : 'false'}">
+                    ${pack.enabled ? 'বন্ধ করুন' : pack.installed ? 'চালু করুন' : 'Install'}
+                </button>
+            </article>
+        `).join('')
+        : '<div class="empty-state">কোনো active agent pack নেই।</div>';
+
+    const enabledPacks = agentPacks.filter((pack) => pack.enabled);
+    const selected = elements.agentPackSelect.value;
+    elements.agentPackSelect.innerHTML = '<option value="">কোনো pack নয়</option>' + enabledPacks
+        .map((pack) => `<option value="${escapeHtml(pack.slug)}">${escapeHtml(pack.name)} (v${escapeHtml(pack.version)})</option>`)
+        .join('');
+    if (enabledPacks.some((pack) => pack.slug === selected)) {
+        elements.agentPackSelect.value = selected;
+    }
+}
+
+function renderAgentPackAdmin(packs) {
+    elements.agentPackAdminList.innerHTML = packs.map((pack) => {
+        const isCustom = !pack.is_builtin;
+        const actions = [];
+        if (isCustom && pack.status === AGENT_PACK_STATUS.ACTIVE) {
+            actions.push(`<button class="button button-quiet button-small" type="button" data-pack-new-version="${escapeHtml(pack.slug)}">নতুন version</button>`);
+        }
+        if (isCustom && pack.status === AGENT_PACK_STATUS.DRAFT) {
+            actions.push(`<button class="button button-quiet button-small" type="button" data-pack-edit="${escapeHtml(pack.slug)}" data-pack-version="${escapeHtml(pack.version)}">Edit draft</button>`);
+            actions.push(`<button class="button button-quiet button-small" type="button" data-pack-activate="${escapeHtml(pack.slug)}" data-pack-version="${escapeHtml(pack.version)}">Activate</button>`);
+        }
+        if (isCustom) {
+            actions.push(`<button class="button button-quiet button-small" type="button" data-pack-rollback="${escapeHtml(pack.slug)}" data-pack-version="${escapeHtml(pack.version)}">এই version থেকে rollback draft</button>`);
+        }
+
+        return `<article class="agent-pack-card">
+            <div><h4>${escapeHtml(pack.name)} <small>v${escapeHtml(pack.version)} · ${AGENT_PACK_STATUS_LABELS[pack.status] || 'Unknown'}</small></h4>
+            <p>${escapeHtml(pack.description)}</p></div>
+            <div class="agent-pack-actions">${actions.join('')}</div>
+        </article>`;
+    }).join('');
+}
+
+async function loadAgentPacks() {
+    if (!apiToken) {
+        return;
+    }
+
+    const responseData = await apiRequest('/agent-packs');
+    agentPacks = responseData.packs || [];
+    renderAgentPacks();
+    elements.agentPackAdmin.hidden = !responseData.can_manage;
+    if (responseData.can_manage) {
+        const adminData = await apiRequest('/admin/agent-packs');
+        renderAgentPackAdmin(adminData.packs || []);
+    }
+}
+
+function populateAgentPackForm(pack) {
+    editingAgentPack = pack ? { slug: pack.slug, version: pack.version } : null;
+    const form = elements.agentPackForm;
+    form.elements.name.value = pack?.name || '';
+    form.elements.slug.value = pack?.slug || '';
+    form.elements.slug.readOnly = Boolean(pack);
+    form.elements.description.value = pack?.description || '';
+    form.elements.guidance.value = pack
+        ? Object.values(pack.profiles || {}).map((profile) => profile.guidance).join('\n')
+        : '';
+    form.elements.examples.value = (pack?.examples || []).join('\n');
+    form.querySelectorAll('input[name="agents"]').forEach((input) => {
+        input.checked = (pack?.agents || []).includes(input.value);
+    });
+    elements.agentPackFormStatus.textContent = pack
+        ? `Editing ${pack.slug} v${pack.version} draft`
+        : 'Guidance cannot change safety or permissions.';
+}
+
+elements.agentPackList.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-pack-install]');
+    if (!button) {
+        return;
+    }
+
+    button.disabled = true;
+    try {
+        const shouldEnable = button.dataset.packEnabled !== 'true';
+        await apiRequest(`/agent-packs/${encodeURIComponent(button.dataset.packInstall)}/installation`, {
+            method: 'PUT',
+            body: JSON.stringify({ enabled: shouldEnable }),
+        });
+        await loadAgentPacks();
+        showNotice(elements.success, shouldEnable ? 'Agent pack চালু হয়েছে।' : 'Agent pack বন্ধ হয়েছে।');
+    } catch (error) {
+        showNotice(elements.error, error.message);
+    } finally {
+        button.disabled = false;
+    }
+});
+
+elements.agentPackAdminList.addEventListener('click', async (event) => {
+    const target = event.target.closest('[data-pack-new-version], [data-pack-edit], [data-pack-activate], [data-pack-rollback]');
+    if (!target) {
+        return;
+    }
+
+    target.disabled = true;
+    try {
+        if (target.dataset.packEdit) {
+            const pack = (await apiRequest('/admin/agent-packs')).packs
+                .find((item) => item.slug === target.dataset.packEdit && item.version === Number(target.dataset.packVersion));
+            if (!pack) {
+                throw new Error('Draft pack পাওয়া যায়নি।');
+            }
+            populateAgentPackForm(pack);
+            elements.agentPackForm.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        } else if (target.dataset.packNewVersion) {
+            const responseData = await apiRequest(`/admin/agent-packs/${encodeURIComponent(target.dataset.packNewVersion)}/versions`, {
+                method: 'POST',
+                body: JSON.stringify({}),
+            });
+            populateAgentPackForm(responseData.pack);
+            await loadAgentPacks();
+            elements.agentPackForm.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        } else if (target.dataset.packActivate) {
+            await apiRequest(`/admin/agent-packs/${encodeURIComponent(target.dataset.packActivate)}/versions/${target.dataset.packVersion}/status`, {
+                method: 'POST',
+                body: JSON.stringify({ status: AGENT_PACK_STATUS.ACTIVE }),
+            });
+            await loadAgentPacks();
+            showNotice(elements.success, 'Agent pack version সক্রিয় হয়েছে।');
+        } else if (target.dataset.packRollback) {
+            await apiRequest(`/admin/agent-packs/${encodeURIComponent(target.dataset.packRollback)}/versions/${target.dataset.packVersion}/rollback`, {
+                method: 'POST',
+                body: JSON.stringify({}),
+            });
+            await loadAgentPacks();
+            showNotice(elements.success, 'Rollback draft তৈরি হয়েছে; activate করার আগে পর্যালোচনা করুন।');
+        }
+    } catch (error) {
+        showNotice(elements.error, error.message);
+    } finally {
+        target.disabled = false;
+    }
+});
+
+elements.agentPackForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const formData = new FormData(elements.agentPackForm);
+    const agents = formData.getAll('agents');
+    const guidanceText = String(formData.get('guidance') || '').trim();
+    const packData = {
+        name: String(formData.get('name') || '').trim(),
+        description: String(formData.get('description') || '').trim(),
+        agents,
+        guidance: Object.fromEntries(agents.map((agent) => [agent, guidanceText])),
+        examples: String(formData.get('examples') || '').split(/\r?\n/).map((value) => value.trim()).filter(Boolean),
+    };
+    const submitButton = elements.agentPackForm.querySelector('button[type="submit"]');
+    submitButton.disabled = true;
+    try {
+        if (editingAgentPack) {
+            await apiRequest(`/admin/agent-packs/${encodeURIComponent(editingAgentPack.slug)}/versions/${editingAgentPack.version}`, {
+                method: 'PATCH',
+                body: JSON.stringify(packData),
+            });
+            showNotice(elements.success, 'Pack draft সংরক্ষণ হয়েছে।');
+        } else {
+            packData.slug = String(formData.get('slug') || '').trim();
+            await apiRequest('/admin/agent-packs', { method: 'POST', body: JSON.stringify(packData) });
+            showNotice(elements.success, 'Pack draft তৈরি হয়েছে।');
+        }
+        elements.agentPackForm.reset();
+        populateAgentPackForm(null);
+        await loadAgentPacks();
+    } catch (error) {
+        showNotice(elements.error, error.message);
+    } finally {
+        submitButton.disabled = false;
+    }
+});
+
 function collectBrainSettings() {
     const approvedModels = approvedModelChoices();
     const agentBrains = {};
@@ -811,6 +1040,8 @@ function collectBrainSettings() {
         fallback_provider: fallbackProvider || null,
         fallback_model: fallbackModel || null,
         model_pricing: modelPricing,
+        max_task_cost: elements.maxTaskCost.value.trim() === '' ? null : Number(elements.maxTaskCost.value),
+        budget_currency: elements.budgetCurrency.value.trim().toUpperCase() || null,
     };
 }
 
@@ -1075,6 +1306,8 @@ async function clearSession() {
     elements.taskList.innerHTML = '<div class="empty-state">কাজ দেখতে API token দিয়ে সংযুক্ত করুন।</div>';
     elements.taskDetail.innerHTML = '<div class="empty-state"><strong>একটি কাজ নির্বাচন করুন</strong><span>কাজের ধাপ ও agent-এর ফলাফল এখানে দেখা যাবে।</span></div>';
     elements.approvalList.innerHTML = '<div class="panel empty-state">অনুমোদন দেখতে API token দিয়ে সংযুক্ত করুন।</div>';
+    agentPacks = [];
+    renderAgentPacks();
     setApprovalCount(0);
     clearNotices();
 }
@@ -1104,6 +1337,10 @@ elements.taskForm.addEventListener('submit', async (event) => {
         title: String(formData.get('title') || '').trim(),
         prompt: String(formData.get('prompt') || '').trim(),
         success_criteria: successCriteria,
+        agent_pack: String(formData.get('agent_pack') || '') || null,
+        max_cost: String(formData.get('max_cost') || '').trim() === ''
+            ? null
+            : Number(formData.get('max_cost')),
     };
     submitButton.disabled = true;
 
@@ -1111,11 +1348,17 @@ elements.taskForm.addEventListener('submit', async (event) => {
         const isCurrentEstimateConfirmed = pendingTaskConfirmation
             && pendingTaskConfirmation.title === taskData.title
             && pendingTaskConfirmation.prompt === taskData.prompt
-            && JSON.stringify(pendingTaskConfirmation.success_criteria) === JSON.stringify(taskData.success_criteria);
+            && JSON.stringify(pendingTaskConfirmation.success_criteria) === JSON.stringify(taskData.success_criteria)
+            && pendingTaskConfirmation.agent_pack === taskData.agent_pack
+            && pendingTaskConfirmation.max_cost === taskData.max_cost;
         if (!isCurrentEstimateConfirmed) {
             const estimateResponse = await apiRequest('/tasks/estimate', {
                 method: 'POST',
-                body: JSON.stringify({ prompt: taskData.prompt }),
+                body: JSON.stringify({
+                    prompt: taskData.prompt,
+                    max_cost: taskData.max_cost,
+                    agent_pack: taskData.agent_pack,
+                }),
             });
             renderTaskEstimate(estimateResponse);
             pendingTaskConfirmation = estimateResponse.cost_estimate.can_complete === false
@@ -1151,6 +1394,9 @@ function renderTaskEstimate(responseData) {
     const costLine = costEstimate.status === 'available'
         ? `সর্বোচ্চ আনুমানিক খরচ: ${costEstimate.maximum_cost} ${costEstimate.currency}`
         : `টাকার হিসাব নেই: ${costEstimate.reason}`;
+    const budgetLine = responseData.cost_budget
+        ? `খরচের সীমা: ${responseData.cost_budget.maximum_cost} ${responseData.cost_budget.currency}`
+        : 'এই কাজের জন্য আলাদা spending limit নেই।';
     const comparisonLine = ['auto', 'fixed'].map((strategy) => {
         const estimate = routingComparison[strategy];
         if (!estimate) {
@@ -1180,6 +1426,7 @@ function renderTaskEstimate(responseData) {
             ? 'এই prompt-এর জন্য token সীমায় উত্তর দেওয়ার জায়গা নেই; prompt ছোট করে আবার অনুমান করুন।'
             : '',
         costLine,
+        budgetLine,
         ...comparisonLine,
         ...selectedModelReasons,
         `Routing evaluation: ${routingComparison.evaluation?.reason || 'উপলব্ধ নয়'}`,

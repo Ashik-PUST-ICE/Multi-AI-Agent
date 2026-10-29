@@ -20,6 +20,8 @@ class UserLlmSetting extends Model
         'fallback_provider',
         'fallback_model',
         'model_pricing',
+        'max_task_cost',
+        'budget_currency',
         'agent_brains',
         'routing_policy',
     ];
@@ -30,6 +32,7 @@ class UserLlmSetting extends Model
             'approved_models' => 'array',
             'agent_models' => 'array',
             'model_pricing' => 'array',
+            'max_task_cost' => 'float',
             'agent_brains' => 'array',
             'routing_policy' => 'string',
         ];

@@ -36,6 +36,8 @@ class UpdateProviderSettingsRequest extends FormRequest
             'model_pricing.*.currency' => ['required', 'string', 'size:3', 'alpha'],
             'model_pricing.*.input_cost_per_million' => ['required', 'numeric', 'min:0', 'max:100000'],
             'model_pricing.*.output_cost_per_million' => ['required', 'numeric', 'min:0', 'max:100000'],
+            'max_task_cost' => ['sometimes', 'nullable', 'numeric', 'min:0.000001', 'max:1000000'],
+            'budget_currency' => ['sometimes', 'nullable', 'string', 'size:3', 'alpha'],
         ];
     }
 }

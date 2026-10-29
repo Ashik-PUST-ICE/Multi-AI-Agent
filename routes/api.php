@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\AgentSpecController;
+use App\Http\Controllers\Api\AgentPackController;
 use App\Http\Controllers\Api\AgentTrustController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\ProviderSettingsController;
@@ -56,8 +57,41 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
         ]);
     });
 
-    Route::post('/v1/tasks/estimate', [TaskController::class, 'estimate'])->name('api.v1.tasks.estimate');
-    Route::post('/v1/tasks', [TaskController::class, 'store'])->name('api.v1.tasks.store');
+    Route::get('/v1/agent-packs', [AgentPackController::class, 'index'])->name('api.v1.agent-packs.index');
+    Route::put('/v1/agent-packs/{slug}/installation', [AgentPackController::class, 'install'])
+        ->where('slug', '[a-z0-9-]+')
+        ->name('api.v1.agent-packs.installation');
+
+    Route::prefix('/v1/admin/agent-packs')
+        ->middleware('can:agent_packs.manage')
+        ->name('api.v1.admin.agent-packs.')
+        ->controller(AgentPackController::class)
+        ->group(function (): void {
+            Route::get('/', 'adminIndex')->name('index');
+            Route::post('/', 'store')->name('store');
+            Route::post('/{slug}/versions', 'createVersion')
+                ->where('slug', '[a-z0-9-]+')
+                ->name('versions.store');
+            Route::patch('/{slug}/versions/{version}', 'update')
+                ->where('slug', '[a-z0-9-]+')
+                ->whereNumber('version')
+                ->name('versions.update');
+            Route::post('/{slug}/versions/{version}/status', 'transition')
+                ->where('slug', '[a-z0-9-]+')
+                ->whereNumber('version')
+                ->name('versions.status');
+            Route::post('/{slug}/versions/{version}/rollback', 'rollback')
+                ->where('slug', '[a-z0-9-]+')
+                ->whereNumber('version')
+                ->name('versions.rollback');
+        });
+
+    Route::post('/v1/tasks/estimate', [TaskController::class, 'estimate'])
+        ->middleware('throttle:30,1')
+        ->name('api.v1.tasks.estimate');
+    Route::post('/v1/tasks', [TaskController::class, 'store'])
+        ->middleware('throttle:10,1')
+        ->name('api.v1.tasks.store');
     Route::get('/v1/tasks', [TaskController::class, 'index'])->name('api.v1.tasks.index');
     Route::get('/v1/tasks/{task}', [TaskController::class, 'show'])
         ->whereNumber('task')

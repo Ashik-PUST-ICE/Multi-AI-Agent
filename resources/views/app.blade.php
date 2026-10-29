@@ -121,6 +121,13 @@
                         <textarea id="task-prompt" name="prompt" rows="5" maxlength="20000" placeholder="কাজটি বিস্তারিত লিখুন..." required></textarea>
                         <label for="task-success-criteria">সাফল্যের শর্ত (প্রতি লাইনে একটি, ঐচ্ছিক)</label>
                         <textarea id="task-success-criteria" name="success_criteria" rows="3" maxlength="5000" placeholder="যেমন: অন্তত ৩টি নির্ভরযোগ্য উৎস ব্যবহার করবে&#10;উত্তরটি বাংলায় দেবে"></textarea>
+                        <label for="task-agent-pack">Agent pack (ঐচ্ছিক)</label>
+                        <select id="task-agent-pack" name="agent_pack">
+                            <option value="">কোনো pack নয়</option>
+                        </select>
+                        <label for="task-max-cost">এই কাজের খরচের সীমা (ঐচ্ছিক)</label>
+                        <input id="task-max-cost" name="max_cost" type="number" min="0.000001" max="1000000" step="any" inputmode="decimal" placeholder="যেমন: 0.50">
+                        <small class="form-help">মুদ্রা Settings-এর cost budget currency অনুযায়ী হবে। Account limit থাকলে কাজের সীমা সেটি অতিক্রম করতে পারবে না।</small>
                         <div class="form-footer">
                             <span>কোনো live action চালানো হবে না।</span>
                             <button class="button button-primary" type="submit">কাজ জমা দিন <span aria-hidden="true">→</span></button>
@@ -185,6 +192,43 @@
                             <div class="empty-state">Trust settings লোড হচ্ছে।</div>
                         </div>
                     </section>
+                    <section class="panel pack-section" aria-labelledby="agent-packs-heading">
+                        <div class="brain-section-heading">
+                            <div>
+                                <h3 id="agent-packs-heading">Agent packs</h3>
+                                <p>Pack কেবল domain guidance যোগ করে; agent, tool বা Trust permission বাড়ায় না।</p>
+                            </div>
+                        </div>
+                        <div class="agent-pack-list" id="agent-pack-list" aria-live="polite">
+                            <div class="empty-state">Agent pack লোড হচ্ছে।</div>
+                        </div>
+                    </section>
+                    <section class="panel pack-section" id="agent-pack-admin" aria-labelledby="agent-pack-admin-heading" hidden>
+                        <div class="brain-section-heading">
+                            <div>
+                                <h3 id="agent-pack-admin-heading">Pack authoring (admin)</h3>
+                                <p>Custom pack draft করুন, version update করুন এবং review শেষে activate করুন।</p>
+                            </div>
+                        </div>
+                        <form class="pack-admin-form" id="agent-pack-form">
+                            <input name="name" type="text" maxlength="120" placeholder="Pack name" required>
+                            <input name="slug" type="text" maxlength="64" pattern="[a-z0-9]+(?:-[a-z0-9]+)*" placeholder="unique-pack-slug" required>
+                            <textarea name="description" rows="2" maxlength="1000" placeholder="Description" required></textarea>
+                            <div class="pack-agent-choices">
+                                <label><input type="checkbox" name="agents" value="Orchestrator"> Orchestrator</label>
+                                <label><input type="checkbox" name="agents" value="Research"> Research</label>
+                                <label><input type="checkbox" name="agents" value="Writer"> Writer</label>
+                                <label><input type="checkbox" name="agents" value="Reviewer"> Reviewer</label>
+                            </div>
+                            <textarea name="guidance" rows="3" maxlength="4000" placeholder="Shared domain guidance for selected agents" required></textarea>
+                            <textarea name="examples" rows="2" maxlength="3000" placeholder="Example task, one per line" required></textarea>
+                            <div class="form-footer">
+                                <span id="agent-pack-form-status">Guidance cannot change safety or permissions.</span>
+                                <button class="button button-primary" type="submit">Draft সংরক্ষণ</button>
+                            </div>
+                        </form>
+                        <div class="agent-pack-admin-list" id="agent-pack-admin-list"></div>
+                    </section>
                 </section>
 
                 <section class="view-panel" id="brain-view" aria-labelledby="brain-heading">
@@ -210,6 +254,16 @@
                         <section class="panel brain-section">
                             <div class="brain-section-heading">
                                 <div><h3>Routing policy</h3><p>দাম আপনার দেওয়া rate থেকে; model quality-র দাবি trusted evaluation ছাড়া করা হয় না।</p></div>
+                            </div>
+                            <div class="brain-form-grid">
+                                <label class="brain-field" for="max-task-cost">
+                                    <span>Account-এর প্রতি কাজের সর্বোচ্চ খরচ (ঐচ্ছিক)</span>
+                                    <input id="max-task-cost" name="max_task_cost" type="number" min="0.000001" max="1000000" step="any" inputmode="decimal" placeholder="খালি রাখলে সীমা নেই">
+                                </label>
+                                <label class="brain-field" for="budget-currency">
+                                    <span>Budget currency (ISO code)</span>
+                                    <input id="budget-currency" name="budget_currency" type="text" minlength="3" maxlength="3" pattern="[A-Za-z]{3}" placeholder="যেমন USD">
+                                </label>
                             </div>
                             <label class="brain-field" for="routing-policy">
                                 <span>Auto policy</span>

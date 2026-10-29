@@ -22,6 +22,7 @@ class TaskModeTransitionService
         private readonly AgentRegistry $agentRegistry,
         private readonly TaskCostEstimator $taskCostEstimator,
         private readonly UserLlmProviderResolver $providerResolver,
+        private readonly TaskCostBudgetService $taskCostBudgetService,
     ) {}
 
     public function transitionToLive(User $user, int $taskId): JsonResponse
@@ -40,6 +41,7 @@ class TaskModeTransitionService
             $prompt = $taskInput['prompt'] ?? $sourceTask->description ?? '';
             $blockedRequirements = $this->blockedRequirements($user, $sourceTask, $agentSequence, $prompt);
             $costEstimate = null;
+            $costBudget = null;
 
             if ($blockedRequirements === []) {
                 $costEstimate = $this->taskCostEstimator->estimate(
@@ -51,6 +53,18 @@ class TaskModeTransitionService
 
                 if (($costEstimate['can_complete'] ?? true) === false) {
                     $blockedRequirements[] = 'live_token_budget_insufficient';
+                }
+
+                try {
+                    $costBudget = $this->taskCostBudgetService->validateSubmission(
+                        $user,
+                        $costEstimate,
+                        isset($taskInput['cost_budget']['task_maximum_cost'])
+                            ? (float) $taskInput['cost_budget']['task_maximum_cost']
+                            : null,
+                    );
+                } catch (InvalidArgumentException) {
+                    $blockedRequirements[] = 'live_cost_budget_insufficient';
                 }
             }
 
@@ -90,6 +104,7 @@ class TaskModeTransitionService
             }
 
             $taskInput['cost_estimate'] = $costEstimate;
+            $taskInput['cost_budget'] = $costBudget;
             $liveTask = $user->tasks()->create([
                 'title' => $sourceTask->title,
                 'description' => $sourceTask->description,

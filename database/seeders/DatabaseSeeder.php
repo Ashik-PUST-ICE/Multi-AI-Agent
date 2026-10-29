@@ -37,5 +37,10 @@ class DatabaseSeeder extends Seeder
             ['display_name' => 'Manage agent specifications', 'module' => 1],
         );
         $adminRole->givePermissionTo($agentSpecsPermission);
+        $agentPacksPermission = Permission::query()->firstOrCreate(
+            ['name' => 'agent_packs.manage', 'guard_name' => 'web'],
+            ['display_name' => 'Manage agent packs', 'module' => 1],
+        );
+        $adminRole->givePermissionTo($agentPacksPermission);
     }
 }

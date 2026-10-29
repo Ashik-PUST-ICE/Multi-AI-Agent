@@ -30,7 +30,7 @@ class TaskController extends Controller
     {
         return $this->orchestratorService->estimate(
             $request->user(),
-            $request->validated('prompt'),
+            $request->validated(),
         );
     }
 

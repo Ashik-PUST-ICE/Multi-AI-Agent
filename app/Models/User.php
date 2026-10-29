@@ -118,4 +118,9 @@ class User extends Authenticatable
     {
         return $this->hasMany(AgentTrustHistory::class);
     }
+
+    public function agentPackInstallations(): HasMany
+    {
+        return $this->hasMany(UserAgentPack::class);
+    }
 }

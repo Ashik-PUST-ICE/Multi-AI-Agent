@@ -53,6 +53,8 @@ class ProviderSettingsService
                 'fallback_provider',
                 'fallback_model',
                 'model_pricing',
+                'max_task_cost',
+                'budget_currency',
                 'agent_brains',
                 'routing_policy',
             ]),
@@ -103,6 +105,16 @@ class ProviderSettingsService
                 $pricingData,
                 $approvedModels,
             );
+            $maxTaskCost = array_key_exists('max_task_cost', $data)
+                ? $data['max_task_cost']
+                : $existingSettings?->max_task_cost;
+            $budgetCurrency = array_key_exists('budget_currency', $data)
+                ? ($data['budget_currency'] === null ? null : strtoupper($data['budget_currency']))
+                : $existingSettings?->budget_currency;
+
+            if ($maxTaskCost !== null && $budgetCurrency === null) {
+                throw new InvalidArgumentException('Choose a budget currency when setting an account task cost limit.');
+            }
 
             $settings = $user->llmSettings()->updateOrCreate([], [
                 'provider' => $providerId,
@@ -116,6 +128,8 @@ class ProviderSettingsService
                 'fallback_provider' => $fallbackProvider,
                 'fallback_model' => $fallbackModel,
                 'model_pricing' => $modelPricing,
+                'max_task_cost' => $maxTaskCost,
+                'budget_currency' => $budgetCurrency,
             ]);
         } catch (InvalidArgumentException $exception) {
             return $this->error($exception->getMessage());
@@ -129,6 +143,8 @@ class ProviderSettingsService
             'fallback_provider',
             'fallback_model',
             'model_pricing',
+            'max_task_cost',
+            'budget_currency',
             'agent_brains',
             'routing_policy',
         ]);
