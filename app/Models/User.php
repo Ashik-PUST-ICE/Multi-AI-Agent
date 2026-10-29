@@ -158,4 +158,9 @@ class User extends Authenticatable
     {
         return $this->hasOne(UserAccessSetting::class);
     }
+
+    public function webAccessSettings(): HasOne
+    {
+        return $this->hasOne(UserWebAccessSetting::class);
+    }
 }

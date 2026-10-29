@@ -2,9 +2,11 @@
 
 namespace App\Tools;
 
+use App\Services\WebSearchService;
+use InvalidArgumentException;
 use LogicException;
 
-class WebSearchTool implements ToolInterface
+class WebSearchTool implements ContextualToolInterface
 {
     public function name(): string
     {
@@ -34,6 +36,7 @@ class WebSearchTool implements ToolInterface
                 'query' => [
                     'type' => 'string',
                     'description' => 'The search query.',
+                    'maxLength' => 500,
                 ],
             ],
             'required' => ['query'],
@@ -43,7 +46,17 @@ class WebSearchTool implements ToolInterface
 
     public function execute(array $input): array
     {
-        throw new LogicException('Live web search is disabled until the security phase configures a validated search adapter.');
+        throw new LogicException('Live web search requires an authenticated agent execution context.');
+    }
+
+    public function executeWithContext(array $input, ToolExecutionContext $context): array
+    {
+        $rawQuery = $input['query'] ?? null;
+        if (! is_string($rawQuery)) {
+            throw new InvalidArgumentException('A string search query is required.');
+        }
+
+        return app(WebSearchService::class)->search($context->user, $rawQuery);
     }
 
     public function simulate(array $input): array
@@ -51,13 +64,13 @@ class WebSearchTool implements ToolInterface
         $rawQuery = $input['query'] ?? null;
 
         if (! is_string($rawQuery)) {
-            throw new \InvalidArgumentException('A string search query is required.');
+            throw new InvalidArgumentException('A string search query is required.');
         }
 
         $query = trim($rawQuery);
 
         if ($query === '') {
-            throw new \InvalidArgumentException('A non-empty search query is required.');
+            throw new InvalidArgumentException('A non-empty search query is required.');
         }
 
         return [

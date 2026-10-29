@@ -16,6 +16,7 @@ use App\Services\TaskCostBudgetService;
 use App\Services\TaskTokenBudgetService;
 use App\Services\TrustLevelService;
 use App\Tools\ToolApprovalRequiredException;
+use App\Tools\ToolExecutionContext;
 use App\Tools\ToolRegistry;
 use App\Tools\ToolTrustLevelException;
 use Illuminate\Http\Client\ConnectionException;
@@ -586,6 +587,9 @@ abstract class BaseAgent
                     $this->mode,
                     array_values(array_unique([...$approvedCallSignatures, ...$policyApprovedSignatures])),
                     $trustLevel,
+                    $user !== null && $agentRun !== null
+                        ? new ToolExecutionContext($user, $agentRun)
+                        : null,
                 );
             } catch (ToolTrustLevelException $exception) {
                 if ($user !== null) {

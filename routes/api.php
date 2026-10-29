@@ -15,6 +15,7 @@ use App\Http\Controllers\Api\SkillController;
 use App\Http\Controllers\Api\TaskController;
 use App\Http\Controllers\Api\TaskReplayShareController;
 use App\Http\Controllers\Api\ToolApprovalController;
+use App\Http\Controllers\Api\WebAccessController;
 use App\Llm\ProviderCatalog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
@@ -91,6 +92,13 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
     Route::post('/v1/notifications/push/subscriptions', [AccessController::class, 'subscribePush'])
         ->middleware('throttle:10,1')
         ->name('api.v1.notifications.push.subscribe');
+    Route::get('/v1/web-access', [WebAccessController::class, 'show'])
+        ->name('api.v1.web-access.show');
+    Route::put('/v1/web-access', [WebAccessController::class, 'update'])
+        ->middleware('throttle:10,1')
+        ->name('api.v1.web-access.update');
+    Route::delete('/v1/web-access/search-key', [WebAccessController::class, 'deleteSearchKey'])
+        ->name('api.v1.web-access.search-key.destroy');
 
     Route::get('/v1/user', function (Request $request) {
         return response()->json([

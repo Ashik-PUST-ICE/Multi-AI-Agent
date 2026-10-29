@@ -46,6 +46,18 @@ class AccessPolicyEngine
         'sudo',
         'prompt_injection',
         'skeptic',
+        'mcp',
+        'custom_tool',
+        'webhook',
+        'code_execute',
+        'run_code',
+        'browser_submit',
+        'browser_download',
+        'login',
+        'password_form',
+        'payment_form',
+        'api_request',
+        'http_request',
     ];
 
     public function __construct(private readonly ToolRegistry $tools) {}

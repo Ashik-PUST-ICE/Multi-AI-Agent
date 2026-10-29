@@ -87,6 +87,7 @@ class ToolRegistry
         string $mode = TASK_MODE_SANDBOX,
         array $approvedCallSignatures = [],
         int $trustLevel = 0,
+        ?ToolExecutionContext $executionContext = null,
     ): array {
         $tool = $this->get($name);
 
@@ -114,6 +115,14 @@ class ToolRegistry
 
         if ($requiresApproval && ! $isApproved) {
             throw new ToolApprovalRequiredException($name, $input, $approvalSignature);
+        }
+
+        if ($tool instanceof ContextualToolInterface) {
+            if ($executionContext === null) {
+                throw new \LogicException("Tool [{$name}] requires an authenticated execution context.");
+            }
+
+            return $tool->executeWithContext($input, $executionContext);
         }
 
         return $tool->execute($input);

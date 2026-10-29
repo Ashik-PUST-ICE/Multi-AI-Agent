@@ -102,6 +102,13 @@ const elements = {
     mobileMoreMenu: document.querySelector('#mobile-more-menu'),
     notificationList: document.querySelector('#notification-list'),
     notificationChannelStatus: document.querySelector('#notification-channel-status'),
+    webAccessForm: document.querySelector('#web-access-form'),
+    webSearchProvider: document.querySelector('#web-search-provider'),
+    webSearchApiKey: document.querySelector('#web-search-api-key'),
+    webAllowedDomains: document.querySelector('#web-allowed-domains'),
+    webDeniedDomains: document.querySelector('#web-denied-domains'),
+    webAccessStatus: document.querySelector('#web-access-status'),
+    deleteWebSearchKey: document.querySelector('#delete-web-search-key'),
 };
 
 let apiToken = sessionStorage.getItem(TOKEN_STORAGE_KEY) || '';
@@ -289,6 +296,9 @@ function switchView(viewName) {
 
     if ((selectedView === 'brain' || selectedView === 'agents') && apiToken) {
         loadBrainSettings().catch((error) => showNotice(elements.error, error.message));
+    }
+    if (selectedView === 'brain' && apiToken) {
+        loadWebAccessSettings().catch((error) => showNotice(elements.error, error.message));
     }
 
     if (selectedView === 'agents' && apiToken) {
@@ -956,6 +966,26 @@ async function loadAgentTrust() {
 async function loadBrainSettings() {
     if (!apiToken) {
         return;
+    }
+
+    async function loadWebAccessSettings() {
+        if (!apiToken || !elements.webAccessForm) {
+            return;
+        }
+
+        const responseData = await apiRequest('/web-access');
+        const settings = responseData.web_access || {};
+        elements.webSearchProvider.value = settings.search_provider || '';
+        elements.webSearchApiKey.value = '';
+        elements.webAllowedDomains.value = (settings.allowed_domains || []).join('\n');
+        elements.webDeniedDomains.value = (settings.denied_domains || []).join('\n');
+        elements.webAccessStatus.textContent = settings.has_search_api_key
+            ? 'Search key সেভ করা আছে; নিরাপত্তার জন্য key আর দেখানো হয় না।'
+            : 'Search provider চালু করতে Settings-এ আপনার API key দিন।';
+    }
+
+    function parseDomainList(value) {
+        return [...new Set(value.split(/\r?\n/).map((domain) => domain.trim().toLowerCase()).filter(Boolean))];
     }
 
     const responseData = await apiRequest('/llm/settings');
@@ -1740,6 +1770,44 @@ elements.brainSettingsForm.addEventListener('submit', async (event) => {
         const responseData = await apiRequest('/llm/settings', {
             method: 'PUT',
             body: JSON.stringify(settingsData),
+        });
+
+        elements.webAccessForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            clearNotices();
+
+            try {
+                const provider = elements.webSearchProvider.value || null;
+                const apiKey = elements.webSearchApiKey.value.trim();
+                await apiRequest('/web-access', {
+                    method: 'PUT',
+                    body: JSON.stringify({
+                        search_provider: provider,
+                        ...(apiKey ? { search_api_key: apiKey } : {}),
+                        allowed_domains: parseDomainList(elements.webAllowedDomains.value),
+                        denied_domains: parseDomainList(elements.webDeniedDomains.value),
+                    }),
+                });
+                elements.webSearchApiKey.value = '';
+                await loadWebAccessSettings();
+                showNotice(elements.success, 'Web access settings সেভ হয়েছে।');
+            } catch (error) {
+                showNotice(elements.error, error.message);
+            }
+        });
+
+        elements.deleteWebSearchKey.addEventListener('click', async () => {
+            if (!window.confirm('সেভ করা search API key মুছে Live web search বন্ধ করবেন?')) {
+                return;
+            }
+
+            try {
+                await apiRequest('/web-access/search-key', { method: 'DELETE' });
+                await loadWebAccessSettings();
+                showNotice(elements.success, 'Search API key মুছে দেওয়া হয়েছে।');
+            } catch (error) {
+                showNotice(elements.error, error.message);
+            }
         });
         brainSettings = responseData.settings;
         renderBrainSelectors();

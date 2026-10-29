@@ -16,6 +16,6 @@ class ResearchAgent extends BaseAgent
 
     protected function allowedTools(): array
     {
-        return ['web_search'];
+        return ['web_search', 'web_read'];
     }
 }

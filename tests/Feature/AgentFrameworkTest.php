@@ -13,6 +13,7 @@ use App\Tools\ToolApprovalRequiredException;
 use App\Tools\ToolInterface;
 use App\Tools\ToolRegistry;
 use App\Tools\ToolTrustLevelException;
+use App\Tools\WebPageReadTool;
 use App\Tools\WebSearchTool;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\App;
@@ -75,6 +76,7 @@ class AgentFrameworkTest extends TestCase
         };
         $registry = new ToolRegistry;
         $registry->register($tool);
+        $registry->register(new WebPageReadTool);
         $provider = new class implements LlmProvider
         {
             public array $calls = [];
@@ -134,7 +136,7 @@ class AgentFrameworkTest extends TestCase
         $this->assertStringContainsString('no web request', $result['notice']);
     }
 
-    public function test_live_web_search_is_disabled_until_security_controls_exist(): void
+    public function test_live_web_search_requires_authenticated_execution_context(): void
     {
         $this->expectException(LogicException::class);
         (new WebSearchTool)->execute(['query' => 'Laravel']);
@@ -364,6 +366,7 @@ class AgentFrameworkTest extends TestCase
         };
         $toolRegistry = new ToolRegistry;
         $toolRegistry->register(new WebSearchTool);
+        $toolRegistry->register(new WebPageReadTool);
 
         $result = App::make(ResearchAgent::class, [
             'provider' => $provider,
@@ -400,6 +403,7 @@ class AgentFrameworkTest extends TestCase
         };
         $toolRegistry = new ToolRegistry;
         $toolRegistry->register(new WebSearchTool);
+        $toolRegistry->register(new WebPageReadTool);
         $agent = App::make(ResearchAgent::class, [
             'provider' => $provider,
             'tools' => $toolRegistry,

@@ -7,7 +7,9 @@ use App\Models\Task;
 use App\Policies\PendingApprovalPolicy;
 use App\Policies\TaskPolicy;
 use App\Tenancy\TenantContext;
+use App\Tools\OutboundMessageTool;
 use App\Tools\ToolRegistry;
+use App\Tools\WebPageReadTool;
 use App\Tools\WebSearchTool;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
@@ -24,6 +26,8 @@ class AppServiceProvider extends ServiceProvider
         $this->app->bind(ToolRegistry::class, function (): ToolRegistry {
             $toolRegistry = new ToolRegistry;
             $toolRegistry->register(new WebSearchTool);
+            $toolRegistry->register(new WebPageReadTool);
+            $toolRegistry->register(new OutboundMessageTool);
 
             return $toolRegistry;
         });

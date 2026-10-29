@@ -346,6 +346,44 @@
                             <button class="button button-primary" type="submit">Brain settings সংরক্ষণ</button>
                         </div>
                     </form>
+
+                    <section class="panel brain-section" aria-labelledby="web-access-heading">
+                        <div class="brain-section-heading">
+                            <div>
+                                <h3 id="web-access-heading">Web search ও domain allowlist</h3>
+                                <p>Search API key আপনার ডাটাবেসে encrypted থাকে। Page reader শুধু আপনার allowlist করা public HTTPS domain পড়তে পারে; কোনো redirect অনুসরণ করে না।</p>
+                            </div>
+                        </div>
+                        <form id="web-access-form" class="task-form">
+                            <label class="brain-field" for="web-search-provider">
+                                <span>Search provider</span>
+                                <select id="web-search-provider" name="search_provider">
+                                    <option value="">বন্ধ</option>
+                                    <option value="brave">Brave Search</option>
+                                    <option value="tavily">Tavily</option>
+                                </select>
+                            </label>
+                            <div class="brain-form-grid">
+                                <label class="brain-field" for="web-search-api-key">
+                                    <span>নিজের Search API key</span>
+                                    <input id="web-search-api-key" name="search_api_key" type="password" maxlength="4096" autocomplete="new-password" placeholder="সেভ করা key ফাঁকা রাখুন">
+                                </label>
+                                <label class="brain-field" for="web-allowed-domains">
+                                    <span>Page reader allowlist (প্রতি লাইনে domain)</span>
+                                    <textarea id="web-allowed-domains" name="allowed_domains" rows="4" placeholder="laravel.com"></textarea>
+                                </label>
+                                <label class="brain-field" for="web-denied-domains">
+                                    <span>অতিরিক্ত denylist (প্রতি লাইনে domain)</span>
+                                    <textarea id="web-denied-domains" name="denied_domains" rows="4" placeholder="example.com"></textarea>
+                                </label>
+                            </div>
+                            <p class="form-help" id="web-access-status">Web settings লোড হচ্ছে।</p>
+                            <div class="brain-save-row">
+                                <button class="button button-primary" type="submit">Web settings সংরক্ষণ</button>
+                                <button class="button button-quiet" id="delete-web-search-key" type="button">Search key মুছুন</button>
+                            </div>
+                        </form>
+                    </section>
                 </section>
 
                 <section class="view-panel" id="skills-view" aria-labelledby="skills-heading">

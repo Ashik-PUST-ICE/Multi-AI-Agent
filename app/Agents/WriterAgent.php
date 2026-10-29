@@ -13,4 +13,9 @@ class WriterAgent extends BaseAgent
     {
         return 'Write a clear, accurate response using only the supplied information. Do not claim actions were taken unless confirmed.';
     }
+
+    protected function allowedTools(): array
+    {
+        return ['send_message'];
+    }
 }
