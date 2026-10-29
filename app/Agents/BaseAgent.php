@@ -8,6 +8,7 @@ use App\Llm\ProviderRequestException;
 use App\Llm\UserLlmProviderResolver;
 use App\Models\AgentRun;
 use App\Models\User;
+use App\Services\AccessPolicyEngine;
 use App\Services\AgentActivityLogger;
 use App\Services\ExecutionKillSwitchService;
 use App\Services\OutboundActionThrottle;
@@ -567,11 +568,23 @@ abstract class BaseAgent
             ]);
 
             try {
+                $policyApprovedSignatures = app(AccessPolicyEngine::class)->authorizeToolCall(
+                    $user,
+                    $agentRun?->task,
+                    $agentRun,
+                    $this->name(),
+                    $toolName,
+                    $arguments,
+                    $this->mode,
+                    $trustLevel,
+                    $approvedCallSignatures,
+                    $this->tools,
+                );
                 $toolResult = $this->tools->run(
                     $toolName,
                     $arguments,
                     $this->mode,
-                    $approvedCallSignatures,
+                    array_values(array_unique([...$approvedCallSignatures, ...$policyApprovedSignatures])),
                     $trustLevel,
                 );
             } catch (ToolTrustLevelException $exception) {

@@ -1,11 +1,13 @@
 <?php
 
+use App\Http\Controllers\Api\AccessController;
 use App\Http\Controllers\Api\AgentPackController;
 use App\Http\Controllers\Api\AgentSpecController;
 use App\Http\Controllers\Api\AgentTrustController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\KnowledgeController;
 use App\Http\Controllers\Api\KnowledgeSystemSettingsController;
+use App\Http\Controllers\Api\NotificationResponseController;
 use App\Http\Controllers\Api\ObservabilityController;
 use App\Http\Controllers\Api\ProviderSettingsController;
 use App\Http\Controllers\Api\SecurityControlController;
@@ -38,6 +40,14 @@ Route::get('/v1/task-replays/{token}', [TaskReplayShareController::class, 'show'
     ->middleware('throttle:30,1')
     ->where('token', '[A-Za-z0-9]{64}')
     ->name('api.v1.task-replays.show');
+Route::get('/v1/notification-responses/{token}/confirm', [NotificationResponseController::class, 'show'])
+    ->middleware('throttle:30,1')
+    ->where('token', '[a-f0-9]{64}')
+    ->name('api.v1.notification-responses.show');
+Route::post('/v1/notification-responses/{token}/confirm', [NotificationResponseController::class, 'decide'])
+    ->middleware('throttle:10,1')
+    ->where('token', '[a-f0-9]{64}')
+    ->name('api.v1.notification-responses.decide');
 
 Route::prefix('/v1/auth')->name('api.v1.auth.')->group(function (): void {
     Route::post('/register', [AuthController::class, 'register'])
@@ -55,6 +65,32 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
     Route::put('/v1/trust/{agentName}', [AgentTrustController::class, 'update'])
         ->where('agentName', '[A-Za-z0-9_-]+')
         ->name('api.v1.trust.update');
+    Route::get('/v1/access', [AccessController::class, 'show'])->name('api.v1.access.show');
+    Route::put('/v1/access', [AccessController::class, 'update'])->name('api.v1.access.update');
+    Route::post('/v1/access/policies', [AccessController::class, 'createPolicy'])
+        ->middleware('throttle:20,1')
+        ->name('api.v1.access.policies.store');
+    Route::delete('/v1/access/policies/{policy}', [AccessController::class, 'revokePolicy'])
+        ->whereNumber('policy')
+        ->name('api.v1.access.policies.destroy');
+    Route::delete('/v1/access/deferred-actions/{action}', [AccessController::class, 'cancelDeferredAction'])
+        ->whereNumber('action')
+        ->name('api.v1.access.deferred-actions.destroy');
+    Route::get('/v1/notifications', [AccessController::class, 'notifications'])->name('api.v1.notifications.index');
+    Route::post('/v1/notifications/{notification}/read', [AccessController::class, 'markNotificationRead'])
+        ->whereNumber('notification')
+        ->name('api.v1.notifications.read');
+    Route::get('/v1/notifications/channels', [AccessController::class, 'notificationChannels'])
+        ->name('api.v1.notifications.channels');
+    Route::put('/v1/notifications/channels/{channel}', [AccessController::class, 'updateNotificationChannel'])
+        ->where('channel', 'email|push|telegram|whatsapp')
+        ->name('api.v1.notifications.channels.update');
+    Route::post('/v1/notifications/push/vapid', [AccessController::class, 'generatePushVapid'])
+        ->middleware('throttle:5,1')
+        ->name('api.v1.notifications.push.vapid');
+    Route::post('/v1/notifications/push/subscriptions', [AccessController::class, 'subscribePush'])
+        ->middleware('throttle:10,1')
+        ->name('api.v1.notifications.push.subscribe');
 
     Route::get('/v1/user', function (Request $request) {
         return response()->json([
@@ -182,6 +218,9 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
         ->whereNumber('task')
         ->name('api.v1.tasks.transition-to-live');
     Route::get('/v1/approvals', [ToolApprovalController::class, 'index'])->name('api.v1.approvals.index');
+    Route::post('/v1/approvals/batch', [ToolApprovalController::class, 'decideBatch'])
+        ->middleware('throttle:20,1')
+        ->name('api.v1.approvals.batch');
     Route::post('/v1/approvals/{approval}/approve', [ToolApprovalController::class, 'approve'])
         ->whereNumber('approval')
         ->name('api.v1.approvals.approve');

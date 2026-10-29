@@ -76,6 +76,17 @@ Each user controls their own agent trust levels on the Agents page. Orchestrator
 | `GET` | `/api/v1/user` | Return the authenticated user's account |
 | `GET` | `/api/v1/trust` | Read the authenticated user's agent trust levels and change history |
 | `PUT` | `/api/v1/trust/{agentName}` | Change one of the authenticated user's agent trust levels, with a reason |
+| `GET` | `/api/v1/access` | Read access modes, owned Auto policies, fixed Never-Auto categories, and notification settings |
+| `PUT` | `/api/v1/access` | Change owner-controlled account/agent access modes, notification preferences, quiet hours, and digest time |
+| `POST` | `/api/v1/access/policies` | Create a bounded Auto grant with agent/tool scope, use limit, expiry, and undo window |
+| `DELETE` | `/api/v1/access/policies/{policy}` | Revoke an owned Auto policy |
+| `GET` | `/api/v1/notifications` | List owner-scoped in-app notification history |
+| `POST` | `/api/v1/notifications/{notification}/read` | Mark an owned notification as read |
+| `GET` | `/api/v1/notifications/channels` | Read channel configuration status and the public Web Push key |
+| `PUT` | `/api/v1/notifications/channels/{channel}` | Save or disable owner-configured Email, Push, Telegram, or WhatsApp delivery |
+| `POST` | `/api/v1/notifications/push/vapid` | Generate owner-specific Web Push credentials |
+| `POST` | `/api/v1/notifications/push/subscriptions` | Register a browser push subscription from an allowlisted HTTPS service |
+| `DELETE` | `/api/v1/access/deferred-actions/{action}` | Cancel a deferred action during its undo window |
 | `GET` | `/api/v1/knowledge/documents` | List the authenticated user's private documents and index status |
 | `POST` | `/api/v1/knowledge/documents` | Upload, extract, chunk, and index a private document |
 | `GET` | `/api/v1/knowledge/documents/{document}/download` | Download an owned private document |
@@ -103,6 +114,7 @@ Each user controls their own agent trust levels on the Agents page. Orchestrator
 | `GET` | `/api/v1/approvals` | List the user's pending tool approvals |
 | `POST` | `/api/v1/approvals/{approval}/approve` | Approve the exact pending action |
 | `POST` | `/api/v1/approvals/{approval}/reject` | Reject the pending action |
+| `POST` | `/api/v1/approvals/batch` | Decide up to 25 pending approvals of the same action type |
 | `GET` | `/api/v1/admin/agent-specs` | List agent specifications and versions (requires `agent_specs.manage`) |
 | `POST` | `/api/v1/admin/agent-specs/{agentName}/versions` | Create a draft spec version |
 | `PATCH` | `/api/v1/admin/agent-specs/{agentName}/versions/{version}` | Edit a draft spec |
@@ -150,6 +162,10 @@ Routing decisions, rationale, and a fallback attempt are recorded as run events.
 Task estimates include a versioned `TaskBrief` created by a bounded local-rule analyzer before orchestration. It classifies Bengali, Banglish, English, or mixed-language requests; suggests intent, explicitly detected file/date entities, clarification questions (at most two), success criteria, and advisory risk/complexity. The original task text is kept unchanged. The analyzer makes no model call, does not ask questions autonomously, and cannot grant trust, tool, or access permissions. Proposed criteria are suggestions; users can add them to and edit the task's criteria before submission. The estimate displays matched skill summaries and adds selected guidance to the agent context; routing receives the complexity label as advisory metadata.
 
 `GET /api/v1/skills` exposes the fixed curated built-in skill catalog. Matching is capped at two skills. Only matched skill instructions are progressively added to agent system guidance, marked untrusted; skill metadata cannot alter the active agent specification, model capability filter, trust level, or permitted tools. No external skill installation, user/organization skill authoring, script execution, skill version lifecycle, correction learning, skill evaluation, or system-prompt lint/evaluation is enabled. This keeps unverified code and externally supplied skill instructions out of execution.
+
+Access defaults to owner-controlled `user` mode at both account and agent levels. Every Live tool call requires an exact owner approval unless an active, unexpired Auto policy matches the owner, agent, tool, scope, task (when task-scoped), remaining use limit, and (for write/approval-sensitive tools) the complete exact input object. Never-Auto categories include access, trust, credential, kill-switch and installation changes; destructive actions; lock/stove/gas controls; payment and transfer actions; outbound messages; and prompt-injection or Skeptic-related actions. Policies with an undo window store the exact tool input encrypted and schedule a delayed release; the owner can cancel before the deadline. The release revalidates the live task/run, approval, policy scope, expiry, use limit, Auto mode, Never-Auto status, trust level, and input constraints. Sandbox always follows the existing simulate-only path. Agents cannot change access settings or create/revoke policies.
+
+The notification center supports owner-scoped history and read/unread state. User-configured Email (SMTP), browser Push, Telegram, and WhatsApp channels are optional; credentials are encrypted in the database, never returned by settings APIs, and are configured in Settings rather than `.env`. Web Push requires HTTPS, a supported public push endpoint, and PHP OpenSSL configured for P-256 key generation (Windows PHP installations may need `OPENSSL_CONF` set before startup). Delivery attempts are logged and failed channels retry up to three times with increasing delays. Quiet hours and the daily digest time use the application timezone and defer non-high-priority delivery; urgent approval notices bypass quiet hours. Approval reminders escalate through the configured channel order. Notification response links are random, hashed at rest, expiring, and one-time; opening the page does not decide. Links are unavailable for deferred actions and higher-risk approvals, which remain app-only. Silence never approves an action. External channels depend on user-provided provider credentials and the deployment's queue worker and scheduled-command runner.
 
 Agent specifications define role, schemas, permitted tools, trust metadata, token/step/timeout limits, stop conditions, and success criteria. Agent-to-agent handoffs use versioned structured envelopes and only the context required for the next stage. Invalid agent output gets one schema-correction attempt and fails if it remains invalid. Admin specification routes require the Spatie `agent_specs.manage` permission; model choices still come only from the user's approved settings.
 

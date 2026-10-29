@@ -40,6 +40,11 @@ class ToolApprovalService
                 'agent_run_id' => $approval->agent_run_id,
                 'action' => $approval->action,
                 'payload' => $approval->payload,
+                'deferred_action' => $approval->deferredAction === null ? null : [
+                    'id' => $approval->deferredAction->id,
+                    'scheduled_at' => $approval->deferredAction->scheduled_at,
+                    'status' => $approval->deferredAction->status,
+                ],
                 'expires_at' => $approval->expires_at,
                 'created_at' => $approval->created_at,
             ])
@@ -56,6 +61,19 @@ class ToolApprovalService
 
             if ($approval->status !== APPROVAL_STATUS_PENDING) {
                 throw new HttpException(409, 'This approval has already been decided.');
+            }
+            $deferredAction = $approval->deferredAction;
+            if ($deferredAction?->status === DEFERRED_TOOL_ACTION_PENDING) {
+                if ($isApproved) {
+                    throw new HttpException(409, 'This action is in its undo window; wait for release or cancel it.');
+                }
+                app(DeferredToolActionService::class)->cancel($deferredAction->id, $user->id);
+
+                return [
+                    'expired' => false,
+                    'approval_id' => $approval->id,
+                    'status' => APPROVAL_STATUS_REJECTED,
+                ];
             }
 
             if ($approval->expires_at !== null && $approval->expires_at->isPast()) {
@@ -118,6 +136,95 @@ class ToolApprovalService
             'approval_id' => $decision['approval_id'],
             'status' => $decision['status'],
         ], $message);
+    }
+
+    /**
+     * @param  list<int>  $approvalIds
+     */
+    public function decideBatch(User $user, array $approvalIds, bool $isApproved, ?string $decisionNote): JsonResponse
+    {
+        $result = DB::transaction(function () use ($user, $approvalIds, $isApproved, $decisionNote): array {
+            $approvals = PendingApproval::query()
+                ->whereIn('id', $approvalIds)
+                ->whereHas('task', static fn ($query) => $query->where('user_id', $user->id))
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get();
+
+            if ($approvals->count() !== count(array_unique($approvalIds))) {
+                throw new HttpException(404, 'One or more approvals were not found.');
+            }
+            if ($approvals->contains(static fn (PendingApproval $approval): bool => $approval->status !== APPROVAL_STATUS_PENDING)) {
+                throw new HttpException(409, 'Every selected approval must still be pending.');
+            }
+            if ($approvals->contains(static fn (PendingApproval $approval): bool => (
+                $approval->deferredAction?->status === DEFERRED_TOOL_ACTION_PENDING
+            ))) {
+                throw new HttpException(422, 'Deferred actions must be cancelled or released individually.');
+            }
+            if ($approvals->pluck('action')->unique()->count() !== 1) {
+                throw new HttpException(422, 'Batch decisions may only include the same action type.');
+            }
+
+            $expiredApprovals = $approvals->filter(
+                static fn (PendingApproval $approval): bool => $approval->expires_at !== null && $approval->expires_at->isPast(),
+            );
+            if ($expiredApprovals->isNotEmpty()) {
+                foreach ($expiredApprovals as $expiredApproval) {
+                    $this->expire($expiredApproval);
+                }
+
+                return ['expired' => true, 'count' => count($approvalIds)];
+            }
+
+            $agentRuns = [];
+            foreach ($approvals as $approval) {
+                $agentRun = $approval->agentRun;
+                $task = $approval->task;
+                if ($agentRun === null || $task === null) {
+                    throw new HttpException(409, 'A selected approval is no longer linked to an active task.');
+                }
+                $approval->update([
+                    'status' => $isApproved ? APPROVAL_STATUS_APPROVED : APPROVAL_STATUS_REJECTED,
+                    'decided_by' => $user->id,
+                    'decision_note' => $decisionNote,
+                    'decided_at' => now(),
+                ]);
+                if ($isApproved) {
+                    $this->activityLogger->recordEvent($agentRun, 'tool.approval_granted', [
+                        'approval_id' => $approval->id,
+                        'tool_name' => $approval->payload['tool_name'] ?? null,
+                        'batch' => true,
+                    ]);
+                    $agentRuns[$agentRun->id] = $agentRun;
+                } else {
+                    $this->failApprovedTask($agentRun, $task, 'The user rejected the requested tool action.');
+                    $this->activityLogger->recordEvent($agentRun, 'tool.approval_rejected', [
+                        'approval_id' => $approval->id,
+                        'tool_name' => $approval->payload['tool_name'] ?? null,
+                        'batch' => true,
+                    ]);
+                }
+            }
+
+            foreach ($agentRuns as $agentRun) {
+                RunAgentJob::dispatch(
+                    $agentRun->id,
+                    $this->agentRegistry->timeoutSeconds($agentRun->agent_name),
+                )->afterCommit();
+            }
+
+            return ['expired' => false, 'count' => $approvals->count()];
+        });
+
+        if ($result['expired']) {
+            throw new HttpException(410, 'One or more selected approvals have expired.');
+        }
+
+        return $this->success([
+            'decided_count' => $result['count'],
+            'status' => $isApproved ? APPROVAL_STATUS_APPROVED : APPROVAL_STATUS_REJECTED,
+        ], UPDATED_SUCCESSFULLY);
     }
 
     private function approvalForUpdate(User $user, int $approvalId): PendingApproval

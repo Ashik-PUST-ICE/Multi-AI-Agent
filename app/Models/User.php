@@ -133,4 +133,29 @@ class User extends Authenticatable
     {
         return $this->hasMany(UserMemory::class);
     }
+
+    public function accessPolicies(): HasMany
+    {
+        return $this->hasMany(UserAccessPolicy::class);
+    }
+
+    public function notifications(): HasMany
+    {
+        return $this->hasMany(UserNotification::class);
+    }
+
+    public function notificationChannels(): HasMany
+    {
+        return $this->hasMany(NotificationChannelConfig::class);
+    }
+
+    public function pushSubscriptions(): HasMany
+    {
+        return $this->hasMany(WebPushSubscription::class);
+    }
+
+    public function accessSettings(): HasOne
+    {
+        return $this->hasOne(UserAccessSetting::class);
+    }
 }

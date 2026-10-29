@@ -84,6 +84,14 @@
                     <span aria-hidden="true">◇</span>
                     <span>Skills</span>
                 </button>
+                <button class="navigation-link" data-view="access" type="button">
+                    <span aria-hidden="true">⚿</span>
+                    <span>Access</span>
+                </button>
+                <button class="navigation-link" data-view="notifications" type="button">
+                    <span aria-hidden="true">♧</span>
+                    <span>Notifications</span>
+                </button>
                 <button class="navigation-link" data-view="knowledge" type="button">
                     <span aria-hidden="true">▤</span>
                     <span>ফাইল ও Memory</span>
@@ -197,6 +205,7 @@
                             <p class="section-description">প্রতিটি সংবেদনশীল কাজ আলাদাভাবে পর্যালোচনা করে অনুমোদন দিন।</p>
                         </div>
                     </div>
+                    <button class="button button-approve button-small" id="batch-approval-button" type="button" disabled>একই ধরনের নির্বাচিত কাজ অনুমোদন</button>
                     <div class="approval-list" id="approval-list" aria-live="polite">
                         <div class="panel empty-state">অনুমোদন দেখতে API token দিয়ে সংযুক্ত করুন।</div>
                     </div>
@@ -353,6 +362,119 @@
                     <p class="form-help">বাইরের skill install, skill script execution, version publishing ও skill-generated suggestions এখনো বন্ধ।</p>
                 </section>
 
+                <section class="view-panel" id="access-view" aria-labelledby="access-heading">
+                    <div class="section-heading">
+                        <div>
+                            <p class="eyebrow">OWNER-CONTROLLED ACCESS</p>
+                            <h2 id="access-heading">Access mode ও Auto policies</h2>
+                            <p class="section-description">ডিফল্ট User mode। Auto policy নির্দিষ্ট agent/tool, scope, ব্যবহার-সীমা ও expiry-তে সীমাবদ্ধ। Sandbox-এ শুধু simulate চলে।</p>
+                        </div>
+                    </div>
+                    <form class="panel task-form" id="access-settings-form">
+                        <label for="access-mode">Account access mode</label>
+                        <select id="access-mode" name="mode">
+                            <option value="user">User — প্রতিটি live tool call-এ অনুমোদন</option>
+                            <option value="auto">Auto — শুধু মিল থাকা সক্রিয় policy</option>
+                        </select>
+                        <div id="agent-access-modes" class="agent-trust-list"></div>
+                        <fieldset class="task-knowledge-fieldset">
+                            <legend>Notification channel preferences</legend>
+                            <label><input data-notification-channel="in_app" type="checkbox" checked> In-app</label>
+                            <label><input data-notification-channel="email" type="checkbox"> Email</label>
+                            <label><input data-notification-channel="push" type="checkbox"> Push</label>
+                            <label><input data-notification-channel="telegram" type="checkbox"> Telegram</label>
+                            <label><input data-notification-channel="whatsapp" type="checkbox"> WhatsApp</label>
+                            <div class="brain-form-grid">
+                                <label for="quiet-hours-start">Quiet hours start<input id="quiet-hours-start" type="time"></label>
+                                <label for="quiet-hours-end">Quiet hours end<input id="quiet-hours-end" type="time"></label>
+                                <label for="notification-digest-time">Digest time<input id="notification-digest-time" type="time"></label>
+                            </div>
+                        </fieldset>
+                        <div class="form-footer">
+                            <span>Agent নিজে mode বা policy বদলাতে পারে না।</span>
+                            <button class="button button-primary" type="submit">Access settings সংরক্ষণ</button>
+                        </div>
+                    </form>
+                    <section class="panel pack-section">
+                        <h3>Notification delivery channels</h3>
+                        <p class="form-help">Secrets encrypted database-এ রাখা হয়; সংরক্ষণের পর কখনো plaintext দেখানো হবে না। High-risk approval link বাইরে পাঠানো হয় না।</p>
+                        <form class="task-form" data-channel-form="email">
+                            <h4>Email (SMTP)</h4>
+                            <input name="host" type="text" placeholder="SMTP host" required>
+                            <div class="brain-form-grid">
+                                <input name="port" type="number" placeholder="Port" value="587" required>
+                                <select name="encryption"><option value="tls">TLS</option><option value="ssl">SSL</option><option value="none">None</option></select>
+                            </div>
+                            <input name="username" type="text" placeholder="SMTP username">
+                            <input name="password" type="password" autocomplete="new-password" placeholder="SMTP password">
+                            <input name="from_address" type="email" placeholder="From email" required>
+                            <input name="from_name" type="text" placeholder="From name">
+                            <input name="recipient" type="email" placeholder="Recipient email" required>
+                            <label><input name="enabled" type="checkbox"> Email channel চালু</label>
+                            <button class="button button-quiet button-small" type="submit">Email settings সংরক্ষণ</button>
+                        </form>
+                        <form class="task-form" data-channel-form="telegram">
+                            <h4>Telegram</h4>
+                            <input name="bot_token" type="password" autocomplete="new-password" placeholder="Bot token" required>
+                            <input name="chat_id" type="text" placeholder="Chat ID" required>
+                            <label><input name="enabled" type="checkbox"> Telegram চালু</label>
+                            <button class="button button-quiet button-small" type="submit">Telegram সংরক্ষণ</button>
+                        </form>
+                        <form class="task-form" data-channel-form="whatsapp">
+                            <h4>WhatsApp Business</h4>
+                            <input name="access_token" type="password" autocomplete="new-password" placeholder="Access token" required>
+                            <input name="phone_number_id" type="text" placeholder="Phone number ID" required>
+                            <input name="recipient" type="tel" placeholder="+8801XXXXXXXXX" required>
+                            <label><input name="enabled" type="checkbox"> WhatsApp চালু</label>
+                            <button class="button button-quiet button-small" type="submit">WhatsApp সংরক্ষণ</button>
+                        </form>
+                        <div class="task-form">
+                            <h4>Web Push</h4>
+                            <input id="push-vapid-subject" type="text" placeholder="mailto:contact@example.com বা HTTPS contact URL">
+                            <button class="button button-quiet button-small" id="generate-push-vapid" type="button">VAPID key তৈরি করুন</button>
+                            <button class="button button-quiet button-small" id="subscribe-push" type="button">এই browser-এ Push চালু</button>
+                            <label><input id="enable-push-channel" type="checkbox"> Push channel চালু</label>
+                        </div>
+                        <div id="notification-channel-status" class="knowledge-list"></div>
+                    </section>
+                    <section class="panel pack-section">
+                        <h3>সীমিত Auto policy তৈরি করুন</h3>
+                        <form class="task-form" id="access-policy-form">
+                            <label for="policy-agent">Agent</label>
+                            <select id="policy-agent" name="agent_name" required>
+                                <option>Orchestrator</option><option>Research</option><option>Writer</option><option>Reviewer</option>
+                            </select>
+                            <label for="policy-tool">নির্দিষ্ট tool name</label>
+                            <input id="policy-tool" name="tool_name" type="text" maxlength="100" required>
+                            <label for="policy-input-constraints">Exact input constraints (write tools-এর জন্য আবশ্যক JSON)</label>
+                            <textarea id="policy-input-constraints" name="input_constraints" rows="2" placeholder='{"path":"reports/summary.txt","content":"approved text"}'></textarea>
+                            <label for="policy-scope">Scope</label>
+                            <select id="policy-scope" name="scope">
+                                <option value="task">এই task</option><option value="day">আজ</option>
+                                <option value="week">এই সপ্তাহ</option><option value="always">নির্ধারিত expiry পর্যন্ত</option>
+                            </select>
+                            <label for="policy-task-id">Task ID (শুধু এই task scope)</label>
+                            <input id="policy-task-id" name="task_id" type="number" min="1">
+                            <div class="brain-form-grid">
+                                <label for="policy-max-uses">সর্বোচ্চ ব্যবহার<input id="policy-max-uses" name="maximum_uses" type="number" min="1" max="1000" value="1" required></label>
+                                <label for="policy-expiry">মেয়াদ (মিনিট)<input id="policy-expiry" name="expires_in_minutes" type="number" min="1" max="10080" value="60" required></label>
+                                <label for="policy-undo">Undo window (সেকেন্ড)<input id="policy-undo" name="undo_window_seconds" type="number" min="0" max="600" value="0" required></label>
+                            </div>
+                            <button class="button button-primary" type="submit">Policy যোগ করুন</button>
+                        </form>
+                        <div id="access-policy-list" class="knowledge-list"></div>
+                        <p class="form-help">Lock, stove, gas, payment, transfer, purchase, email/message এবং access-settings tool কখনো Auto নয়। Undo window-সহ policy এখন approval বাধ্যতামূলক রাখে।</p>
+                    </section>
+                </section>
+
+                <section class="view-panel" id="notifications-view" aria-labelledby="notifications-heading">
+                    <div class="section-heading">
+                        <div><p class="eyebrow">IN-APP NOTIFICATION CENTER</p><h2 id="notifications-heading">Notifications</h2></div>
+                    </div>
+                    <div id="notification-list" class="approval-list" aria-live="polite"></div>
+                    <p class="form-help">প্রতি channel-এর delivery status ও failure লগ হয়। Approval না এলে কোনো tool action অনুমোদিত ধরা হয় না।</p>
+                </section>
+
                 <section class="view-panel" id="knowledge-view" aria-labelledby="knowledge-heading">
                     <div class="section-heading">
                         <div>
@@ -476,6 +598,8 @@
             <p>Provider, API key ও routing controls Brain পেজে পরিচালনা করুন।</p>
             <button class="button button-quiet button-small" data-view="brain" type="button">Brain settings খুলুন</button>
             <button class="button button-quiet button-small" data-view="skills" type="button">Skills খুলুন</button>
+            <button class="button button-quiet button-small" data-view="access" type="button">Access settings খুলুন</button>
+            <button class="button button-quiet button-small" data-view="notifications" type="button">Notifications খুলুন</button>
             <button class="button button-quiet button-small" data-view="knowledge" type="button">ফাইল ও Memory খুলুন</button>
         </div>
     </div>

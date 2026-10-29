@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Api\BatchDecideToolApprovalRequest;
 use App\Http\Requests\Api\DecideToolApprovalRequest;
 use App\Services\ToolApprovalService;
 use Illuminate\Http\JsonResponse;
@@ -40,6 +41,18 @@ class ToolApprovalController extends Controller
             $approval,
             false,
             $validatedData['decision_note'] ?? null,
+        );
+    }
+
+    public function decideBatch(BatchDecideToolApprovalRequest $request): JsonResponse
+    {
+        $data = $request->validated();
+
+        return $this->toolApprovalService->decideBatch(
+            $request->user(),
+            $data['approval_ids'],
+            $data['decision'] === 'approve',
+            $data['decision_note'] ?? null,
         );
     }
 }

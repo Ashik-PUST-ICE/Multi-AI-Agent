@@ -4,7 +4,9 @@ namespace App\Services;
 
 use App\Agents\AgentFactory;
 use App\Agents\AgentMessageEnvelope;
+use App\Jobs\ReleaseDeferredToolActionJob;
 use App\Models\AgentRun;
+use App\Models\DeferredToolAction;
 use App\Models\PendingApproval;
 use App\Models\Scopes\TenantScope;
 use App\Models\Task;
@@ -299,7 +301,7 @@ class AgentRunService
                 ));
 
             if ($existingApproval === null) {
-                $agentRun->pendingApprovals()->create([
+                $existingApproval = $agentRun->pendingApprovals()->create([
                     'task_id' => $task->id,
                     'action' => "tool:{$exception->toolName}",
                     'requested_by' => $user->id,
@@ -312,6 +314,26 @@ class AgentRunService
                     'expires_at' => now()->addMinutes((int) config('llm.approval_expiry', 15)),
                 ]);
             }
+            if ($exception->deferSeconds > 0 && $exception->policyId !== null) {
+                $deferred = DeferredToolAction::query()->firstOrCreate(
+                    ['pending_approval_id' => $existingApproval->id],
+                    [
+                        'policy_id' => $exception->policyId,
+                        'task_id' => $task->id,
+                        'agent_run_id' => $agentRun->id,
+                        'agent_name' => $agentRun->agent_name,
+                        'tool_name' => $exception->toolName,
+                        'tool_input' => $exception->input,
+                        'approval_signature' => $exception->approvalSignature,
+                        'scheduled_at' => now()->addSeconds($exception->deferSeconds),
+                        'status' => DEFERRED_TOOL_ACTION_PENDING,
+                    ],
+                );
+                ReleaseDeferredToolActionJob::dispatch($deferred->id)
+                    ->delay($deferred->scheduled_at)
+                    ->afterCommit();
+            }
+            app(NotificationService::class)->toolApprovalRequested($user, $existingApproval->id, $task);
 
             $agentRun->update([
                 'status' => AGENT_RUN_STATUS_PENDING,

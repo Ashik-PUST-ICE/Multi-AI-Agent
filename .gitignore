@@ -47,6 +47,10 @@ package-lock.json
 !/tests/Feature/AgentPackApiTest.php
 !/tests/Feature/FlightRecorderApiTest.php
 !/tests/Feature/OutboundActionThrottleTest.php
+!/tests/Feature/DeferredToolActionTest.php
+!/tests/Feature/NotificationChannelsTest.php
+!/tests/Feature/NotificationMaintenanceTest.php
+!/tests/Feature/NotificationResponseTest.php
 !/tests/Feature/SecurityControlApiTest.php
 !/tests/Feature/UserLlmProviderResolverTest.php
 composer.lock

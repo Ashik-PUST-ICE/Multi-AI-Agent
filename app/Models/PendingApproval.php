@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class PendingApproval extends Model
 {
@@ -47,5 +48,10 @@ class PendingApproval extends Model
     public function decider(): BelongsTo
     {
         return $this->belongsTo(User::class, 'decided_by');
+    }
+
+    public function deferredAction(): HasOne
+    {
+        return $this->hasOne(DeferredToolAction::class, 'pending_approval_id');
     }
 }

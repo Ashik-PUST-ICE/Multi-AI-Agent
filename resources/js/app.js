@@ -20,7 +20,13 @@ const AGENT_PACK_STATUS_LABELS = {
 const elements = {
     approvalCount: document.querySelector('#approval-count'),
     approvalList: document.querySelector('#approval-list'),
+    batchApprovalButton: document.querySelector('#batch-approval-button'),
     application: document.querySelector('#application'),
+    accessMode: document.querySelector('#access-mode'),
+    accessSettingsForm: document.querySelector('#access-settings-form'),
+    agentAccessModes: document.querySelector('#agent-access-modes'),
+    accessPolicyForm: document.querySelector('#access-policy-form'),
+    accessPolicyList: document.querySelector('#access-policy-list'),
     authError: document.querySelector('#auth-error'),
     authDescription: document.querySelector('#auth-description'),
     authEmail: document.querySelector('#auth-email'),
@@ -94,6 +100,8 @@ const elements = {
     navigationButtons: document.querySelectorAll('[data-view]'),
     mobileMoreButton: document.querySelector('#mobile-more-button'),
     mobileMoreMenu: document.querySelector('#mobile-more-menu'),
+    notificationList: document.querySelector('#notification-list'),
+    notificationChannelStatus: document.querySelector('#notification-channel-status'),
 };
 
 let apiToken = sessionStorage.getItem(TOKEN_STORAGE_KEY) || '';
@@ -248,7 +256,7 @@ async function activateToken(token, displayName = '') {
     canManageKnowledgeSettings = userResponse.user.can_manage_knowledge_settings === true;
     canManageSecurity = userResponse.user.can_manage_security === true;
     setConnected(true);
-    await Promise.all([loadTasks(), loadApprovals()]);
+    await Promise.all([loadTasks(), loadApprovals(), loadAccess(), loadNotifications()]);
     await loadAgentPacks();
     await loadKnowledge();
 }
@@ -263,6 +271,8 @@ function switchView(viewName) {
         brain: 'Brain ও routing',
         skills: 'Skills',
         knowledge: 'ফাইল ও Memory',
+        access: 'Access policy',
+        notifications: 'Notifications',
     };
 
     elements.views.forEach((view) => {
@@ -293,6 +303,87 @@ function switchView(viewName) {
     if (selectedView === 'skills' && apiToken) {
         loadSkills().catch((error) => showNotice(elements.error, error.message));
     }
+
+    if (selectedView === 'access' && apiToken) {
+        loadAccess().catch((error) => showNotice(elements.error, error.message));
+    }
+
+    if (selectedView === 'notifications' && apiToken) {
+        loadNotifications().catch((error) => showNotice(elements.error, error.message));
+    }
+}
+
+async function loadAccess() {
+    const [responseData, channelData] = await Promise.all([
+        apiRequest('/access'),
+        apiRequest('/notifications/channels'),
+    ]);
+    const access = responseData.access || {};
+    elements.accessMode.value = access.mode || 'user';
+    const notificationSettings = responseData.notifications || {};
+    const enabledChannels = notificationSettings.preferences?.tool_approval?.channels || ['in_app'];
+    document.querySelectorAll('[data-notification-channel]').forEach((checkbox) => {
+        checkbox.checked = enabledChannels.includes(checkbox.dataset.notificationChannel);
+    });
+    document.querySelector('#quiet-hours-start').value = notificationSettings.quiet_hours?.start || '';
+    document.querySelector('#quiet-hours-end').value = notificationSettings.quiet_hours?.end || '';
+    document.querySelector('#notification-digest-time').value = notificationSettings.digest_time || '';
+    const agents = ['Orchestrator', 'Research', 'Writer', 'Reviewer'];
+    elements.agentAccessModes.innerHTML = agents.map((agent) => `
+        <label class="brain-field">${escapeHtml(agent)} access
+            <select name="agent_modes.${escapeHtml(agent)}">
+                <option value="inherit">Account default (${escapeHtml(access.mode || 'user')})</option>
+                <option value="user" ${access.agent_modes?.[agent] === 'user' ? 'selected' : ''}>User</option>
+                <option value="auto" ${access.agent_modes?.[agent] === 'auto' ? 'selected' : ''}>Auto</option>
+            </select>
+        </label>
+    `).join('');
+    renderAccessPolicies(responseData.policies || []);
+    document.querySelector('#enable-push-channel').checked = channelData.channels?.push?.enabled === true;
+    const configuredChannels = Object.entries(channelData.channels || {})
+        .map(([name, value]) => `<p>${escapeHtml(name)}: ${value.configured ? 'configured' : 'missing'} · ${value.enabled ? 'enabled' : 'disabled'}</p>`);
+    const pushSubscriptionStatus = `<p>Push subscriptions: ${escapeHtml(channelData.push_subscriptions || 0)}</p>`;
+    elements.notificationChannelStatus.innerHTML = [...configuredChannels, pushSubscriptionStatus].join('');
+    elements.notificationChannelStatus.dataset.pushPublicKey = channelData.push_public_key || '';
+}
+
+function renderAccessPolicies(policies) {
+    if (policies.length === 0) {
+        elements.accessPolicyList.innerHTML = '<div class="empty-state">কোনো Auto policy নেই।</div>';
+        return;
+    }
+
+    elements.accessPolicyList.innerHTML = policies.map((policy) => `
+        <article class="panel approval-card">
+            <h4>${escapeHtml(policy.agent_name)} · ${escapeHtml(policy.tool_name)}</h4>
+            <p>Scope: ${escapeHtml(policy.scope)} · ব্যবহার: ${escapeHtml(policy.uses_count)}/${escapeHtml(policy.maximum_uses)} · expiry: ${escapeHtml(formatDate(policy.expires_at))}</p>
+            <p>Undo: ${escapeHtml(policy.undo_window_seconds)}s · Status: ${policy.status === 1 ? 'active' : 'revoked'}</p>
+            <button class="button button-danger button-small" type="button" data-revoke-policy="${escapeHtml(policy.id)}">Policy revoke</button>
+        </article>
+    `).join('');
+}
+
+async function loadNotifications() {
+    const responseData = await apiRequest('/notifications');
+    const notifications = responseData.notifications || [];
+    if (notifications.length === 0) {
+        elements.notificationList.innerHTML = '<div class="panel empty-state">এখনো কোনো notification নেই।</div>';
+        return;
+    }
+
+    elements.notificationList.innerHTML = notifications.map((notification) => `
+        <article class="panel approval-card">
+            <div class="approval-card-header">
+                <div><h3>${escapeHtml(notification.title)}</h3><p>${escapeHtml(notification.message)}</p></div>
+                <span class="status-chip status-${notification.status === 0 ? 1 : 2}">${notification.status === 0 ? 'Unread' : 'Read'}</span>
+            </div>
+            <p>${escapeHtml(formatDate(notification.delivered_at))}</p>
+            <div class="approval-actions">
+                ${notification.data?.approval_id ? `<button class="button button-approve button-small" type="button" data-open-approval>Approval দেখুন</button>` : ''}
+                ${notification.status === 0 ? `<button class="button button-quiet button-small" type="button" data-read-notification="${escapeHtml(notification.id)}">পড়া হয়েছে</button>` : ''}
+            </div>
+        </article>
+    `).join('');
 }
 
 async function loadSkills() {
@@ -576,6 +667,7 @@ function setApprovalCount(count) {
 
 function renderApprovals(approvals) {
     setApprovalCount(approvals.length);
+    elements.batchApprovalButton.disabled = true;
 
     if (approvals.length === 0) {
         elements.approvalList.innerHTML = '<div class="panel empty-state"><strong>কোনো অনুমোদন অপেক্ষায় নেই</strong><span>নতুন approval request এলে এখানে দেখা যাবে।</span></div>';
@@ -586,12 +678,16 @@ function renderApprovals(approvals) {
         <article class="panel approval-card">
             <div class="approval-card-header">
                 <div>
+                    <label><input type="checkbox" data-approval-select value="${escapeHtml(approval.id)}" data-approval-action="${escapeHtml(approval.action)}"> একই action-এর batch-এ রাখুন</label>
                     <h3>${escapeHtml(approval.action)}</h3>
                     <p>কাজ #${escapeHtml(approval.task_id)} · মেয়াদ: ${escapeHtml(formatDate(approval.expires_at))}</p>
                 </div>
                 <span class="status-chip status-1">অনুমোদন প্রয়োজন</span>
             </div>
             <pre class="approval-data">${escapeHtml(JSON.stringify(approval.payload?.tool_input || {}, null, 2))}</pre>
+            ${approval.deferred_action?.status === 0
+                ? `<p>Undo window শেষ হবে: ${escapeHtml(formatDate(approval.deferred_action.scheduled_at))}</p><button class="button button-danger button-small" type="button" data-cancel-deferred="${escapeHtml(approval.deferred_action.id)}">Undo / বাতিল</button>`
+                : ''}
             <div class="approval-actions">
                 <button class="button button-danger button-small" type="button" data-approval-id="${escapeHtml(approval.id)}" data-decision="reject">প্রত্যাখ্যান</button>
                 <button class="button button-approve button-small" type="button" data-approval-id="${escapeHtml(approval.id)}" data-decision="approve">অনুমোদন দিন</button>
@@ -2156,7 +2252,59 @@ elements.taskDetail.addEventListener('click', async (event) => {
     }
 });
 
+function refreshBatchApprovalButton() {
+    const selected = Array.from(elements.approvalList.querySelectorAll('[data-approval-select]:checked'));
+    const sameAction = new Set(selected.map((checkbox) => checkbox.dataset.approvalAction)).size <= 1;
+    elements.batchApprovalButton.disabled = selected.length < 2 || !sameAction;
+}
+
+elements.approvalList.addEventListener('change', (event) => {
+    if (event.target.matches('[data-approval-select]')) {
+        refreshBatchApprovalButton();
+    }
+});
+
+elements.batchApprovalButton.addEventListener('click', async () => {
+    const selected = Array.from(elements.approvalList.querySelectorAll('[data-approval-select]:checked'));
+    if (selected.length < 2 || new Set(selected.map((checkbox) => checkbox.dataset.approvalAction)).size !== 1) {
+        showNotice(elements.error, 'Batch সিদ্ধান্তে অন্তত দুইটি একই ধরনের approval বেছে নিন।');
+        return;
+    }
+
+    elements.batchApprovalButton.disabled = true;
+    try {
+        await apiRequest('/approvals/batch', {
+            method: 'POST',
+            body: JSON.stringify({
+                approval_ids: selected.map((checkbox) => Number(checkbox.value)),
+                decision: 'approve',
+            }),
+        });
+        await Promise.all([loadApprovals(), loadTasks()]);
+        showNotice(elements.success, `${selected.length}টি একই ধরনের action অনুমোদিত হয়েছে।`);
+    } catch (error) {
+        showNotice(elements.error, error.message);
+    } finally {
+        refreshBatchApprovalButton();
+    }
+});
+
 elements.approvalList.addEventListener('click', async (event) => {
+    const cancelDeferred = event.target.closest('[data-cancel-deferred]');
+    if (cancelDeferred) {
+        cancelDeferred.disabled = true;
+        try {
+            await apiRequest(`/access/deferred-actions/${encodeURIComponent(cancelDeferred.dataset.cancelDeferred)}`, {
+                method: 'DELETE',
+            });
+            await Promise.all([loadApprovals(), loadTasks()]);
+            showNotice(elements.success, 'Undo window-এর মধ্যে কাজটি বাতিল হয়েছে।');
+        } catch (error) {
+            showNotice(elements.error, error.message);
+        }
+        return;
+    }
+
     const decisionButton = event.target.closest('[data-approval-id][data-decision]');
     if (!decisionButton) {
         return;
@@ -2178,6 +2326,220 @@ elements.approvalList.addEventListener('click', async (event) => {
         showNotice(elements.error, error.message);
     } finally {
         decisionButton.disabled = false;
+    }
+});
+
+elements.accessSettingsForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const agentModes = {};
+    elements.agentAccessModes.querySelectorAll('select').forEach((select) => {
+        const [agentName] = select.name.split('.');
+        if (select.value !== 'inherit') {
+            agentModes[agentName] = select.value;
+        }
+    });
+
+    try {
+        await apiRequest('/access', {
+            method: 'PUT',
+            body: JSON.stringify({
+                mode: elements.accessMode.value,
+                agent_modes: agentModes,
+                notification_preferences: {
+                    tool_approval: {
+                        channels: Array.from(document.querySelectorAll('[data-notification-channel]:checked'))
+                            .map((checkbox) => checkbox.dataset.notificationChannel),
+                    },
+                },
+                quiet_hours: {
+                    start: document.querySelector('#quiet-hours-start').value || null,
+                    end: document.querySelector('#quiet-hours-end').value || null,
+                },
+                digest_time: document.querySelector('#notification-digest-time').value || null,
+            }),
+        });
+        await loadAccess();
+        showNotice(elements.success, 'Access settings সংরক্ষিত হয়েছে।');
+    } catch (error) {
+        showNotice(elements.error, error.message);
+    }
+});
+
+elements.accessPolicyForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const formData = Object.fromEntries(new FormData(elements.accessPolicyForm));
+    let inputConstraints = null;
+    if (formData.input_constraints.trim() !== '') {
+        try {
+            inputConstraints = JSON.parse(formData.input_constraints);
+            if (!inputConstraints || Array.isArray(inputConstraints) || typeof inputConstraints !== 'object') {
+                throw new Error('JSON must be an object.');
+            }
+        } catch (error) {
+            showNotice(elements.error, `Input constraints JSON ভুল: ${error.message}`);
+            return;
+        }
+    }
+    const policy = {
+        ...formData,
+        input_constraints: inputConstraints,
+        task_id: formData.task_id ? Number(formData.task_id) : null,
+        maximum_uses: Number(formData.maximum_uses),
+        expires_in_minutes: Number(formData.expires_in_minutes),
+        undo_window_seconds: Number(formData.undo_window_seconds),
+    };
+
+    try {
+        await apiRequest('/access/policies', {
+            method: 'POST',
+            body: JSON.stringify(policy),
+        });
+        elements.accessPolicyForm.reset();
+        await loadAccess();
+        showNotice(elements.success, 'Auto policy তৈরি হয়েছে।');
+    } catch (error) {
+        showNotice(elements.error, error.message);
+    }
+});
+
+elements.accessPolicyList.addEventListener('click', async (event) => {
+    const revokeButton = event.target.closest('[data-revoke-policy]');
+    if (!revokeButton) {
+        return;
+    }
+
+    revokeButton.disabled = true;
+    try {
+        await apiRequest(`/access/policies/${encodeURIComponent(revokeButton.dataset.revokePolicy)}`, {
+            method: 'DELETE',
+        });
+        await loadAccess();
+        showNotice(elements.success, 'Auto policy revoke করা হয়েছে।');
+    } catch (error) {
+        showNotice(elements.error, error.message);
+    } finally {
+        revokeButton.disabled = false;
+    }
+});
+
+document.querySelectorAll('[data-channel-form]').forEach((form) => {
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const channel = form.dataset.channelForm;
+        const values = Object.fromEntries(new FormData(form));
+        values.enabled = form.querySelector('[name="enabled"]').checked;
+        if (channel === 'email') {
+            values.port = Number(values.port);
+        }
+        Object.keys(values).forEach((key) => {
+            if (values[key] === '' || values[key] === null) {
+                delete values[key];
+            }
+        });
+
+        try {
+            await apiRequest(`/notifications/channels/${channel}`, {
+                method: 'PUT',
+                body: JSON.stringify(values),
+            });
+            await loadAccess();
+            showNotice(elements.success, `${channel} channel settings সংরক্ষিত হয়েছে।`);
+        } catch (error) {
+            showNotice(elements.error, error.message);
+        }
+    });
+});
+
+document.querySelector('#generate-push-vapid').addEventListener('click', async () => {
+    const subject = document.querySelector('#push-vapid-subject').value.trim();
+    try {
+        const response = await apiRequest('/notifications/push/vapid', {
+            method: 'POST',
+            body: JSON.stringify({ subject }),
+        });
+        elements.notificationChannelStatus.dataset.pushPublicKey = response.public_key;
+        showNotice(elements.success, 'VAPID key তৈরি হয়েছে। এখন browser subscription চালু করুন।');
+        await loadAccess();
+    } catch (error) {
+        showNotice(elements.error, error.message);
+    }
+});
+
+function decodeBase64Url(value) {
+    const padding = '='.repeat((4 - (value.length % 4)) % 4);
+    const normalized = (value + padding).replace(/-/g, '+').replace(/_/g, '/');
+    return Uint8Array.from(atob(normalized), (character) => character.charCodeAt(0));
+}
+
+document.querySelector('#subscribe-push').addEventListener('click', async () => {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+        showNotice(elements.error, 'এই browser-এ Web Push সমর্থিত নয়।');
+        return;
+    }
+
+    try {
+        const publicKey = elements.notificationChannelStatus.dataset.pushPublicKey;
+        if (!publicKey) {
+            throw new Error('আগে VAPID key তৈরি করুন।');
+        }
+        const permission = await Notification.requestPermission();
+        if (permission !== 'granted') {
+            throw new Error('Browser notification permission দেওয়া হয়নি।');
+        }
+        const registration = await navigator.serviceWorker.register('/sw.js');
+        let subscription = await registration.pushManager.getSubscription();
+        if (!subscription) {
+            subscription = await registration.pushManager.subscribe({
+                userVisibleOnly: true,
+                applicationServerKey: decodeBase64Url(publicKey),
+            });
+        }
+        await apiRequest('/notifications/push/subscriptions', {
+            method: 'POST',
+            body: JSON.stringify(subscription.toJSON()),
+        });
+        await loadAccess();
+        showNotice(elements.success, 'এই browser-এ Push subscription যোগ হয়েছে।');
+    } catch (error) {
+        showNotice(elements.error, error.message);
+    }
+});
+
+document.querySelector('#enable-push-channel').addEventListener('change', async (event) => {
+    try {
+        await apiRequest('/notifications/channels/push', {
+            method: 'PUT',
+            body: JSON.stringify({ enabled: event.target.checked }),
+        });
+        await loadAccess();
+    } catch (error) {
+        event.target.checked = false;
+        showNotice(elements.error, error.message);
+    }
+});
+
+elements.notificationList.addEventListener('click', async (event) => {
+    if (event.target.closest('[data-open-approval]')) {
+        switchView('approvals');
+        return;
+    }
+
+    const readButton = event.target.closest('[data-read-notification]');
+    if (!readButton) {
+        return;
+    }
+
+    readButton.disabled = true;
+    try {
+        await apiRequest(`/notifications/${encodeURIComponent(readButton.dataset.readNotification)}/read`, {
+            method: 'POST',
+            body: JSON.stringify({}),
+        });
+        await loadNotifications();
+    } catch (error) {
+        showNotice(elements.error, error.message);
+    } finally {
+        readButton.disabled = false;
     }
 });
 

@@ -13,6 +13,8 @@ class ToolApprovalRequiredException extends RuntimeException
         public readonly string $toolName,
         public readonly array $input,
         public readonly string $approvalSignature,
+        public readonly int $deferSeconds = 0,
+        public readonly ?int $policyId = null,
     ) {
         parent::__construct("Tool [{$toolName}] requires user approval before execution.");
     }
