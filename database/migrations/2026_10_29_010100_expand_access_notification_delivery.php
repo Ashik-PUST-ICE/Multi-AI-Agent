@@ -66,7 +66,7 @@ return new class extends Migration
             $table->timestamp('last_reminder_at')->nullable();
             $table->timestamp('consumed_at')->nullable();
             $table->timestamps();
-            $table->index(['pending_approval_id', 'expires_at']);
+            $table->index(['pending_approval_id', 'expires_at'], 'nrt_pending_expires_idx');
         });
 
         Schema::create('deferred_tool_actions', function (Blueprint $table): void {

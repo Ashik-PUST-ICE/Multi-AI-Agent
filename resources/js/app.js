@@ -2672,6 +2672,16 @@ function renderTaskEstimate(responseData) {
             : `অজানা (${estimate.reason})`;
         return `${strategy === 'auto' ? 'Auto' : 'Fixed'} forecast: ${price}`;
     }).filter(Boolean);
+    const routeComparisonLine = ['single_agent', 'multi_agent'].map((strategy) => {
+        const estimate = routingComparison[strategy];
+        if (!estimate) {
+            return '';
+        }
+        const price = estimate.status === 'available'
+            ? `${estimate.maximum_cost} ${estimate.currency}`
+            : `অজানা (${estimate.reason})`;
+        return `${strategy === 'single_agent' ? 'এক agent' : 'Multi-agent'} route forecast: ${price}; ${estimate.estimated_tokens ?? '—'} tokens`;
+    }).filter(Boolean);
     const selectedModelReasons = (costEstimate.agents || []).map((agentEstimate) => {
         const fallbackModels = (agentEstimate.fallback_candidates || [])
             .map((fallback) => `${fallback.provider}/${fallback.model}`)
@@ -2712,8 +2722,9 @@ function renderTaskEstimate(responseData) {
         costLine,
         budgetLine,
         ...comparisonLine,
+        ...routeComparisonLine,
         ...selectedModelReasons,
-        `Routing evaluation: ${routingComparison.evaluation?.reason || 'উপলব্ধ নয়'}`,
+        'Same test prompts can be submitted with routing_strategy=single_agent and routing_strategy=multi_agent to compare completed results and usage.',
         'হিসাবটি configured fallback-সহ সর্বোচ্চ token budget ও আনুমানিক input token-এর উপর ভিত্তি করে; failed request-এর খরচসহ provider-এর প্রকৃত bill ভিন্ন হতে পারে।',
         'এখন আবার বোতাম চাপলে কাজ শুরু হবে।',
     ].filter(Boolean);

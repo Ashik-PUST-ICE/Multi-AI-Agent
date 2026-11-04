@@ -7,8 +7,11 @@ final class ComplexityRouter
     /**
      * @return array{strategy: string, agent_sequence: list<string>, reason: string}
      */
-    public function route(string $prompt, ?string $intakeComplexity = null): array
-    {
+    public function route(
+        string $prompt,
+        ?string $intakeComplexity = null,
+        ?string $strategyOverride = null,
+    ): array {
         $normalizedPrompt = mb_strtolower($prompt);
         $complexityEstimate = in_array($intakeComplexity, ['simple', 'moderate', 'complex'], true)
             ? $intakeComplexity
@@ -20,11 +23,13 @@ final class ComplexityRouter
             $normalizedPrompt,
         ) === 1;
 
-        if ($requestsMultipleRoles) {
+        if ($strategyOverride === 'multi_agent' || ($strategyOverride === null && $requestsMultipleRoles)) {
             return [
                 'strategy' => 'multi_agent',
                 'agent_sequence' => ['Orchestrator', 'Research', 'Writer', 'Reviewer'],
-                'reason' => 'The request explicitly combines research or analysis with synthesis or independent review.',
+                'reason' => $strategyOverride === 'multi_agent'
+                    ? 'The user explicitly selected the multi-agent route for this task.'
+                    : 'The request explicitly combines research or analysis with synthesis or independent review.',
                 'intake_complexity' => $complexityEstimate,
             ];
         }
@@ -34,7 +39,9 @@ final class ComplexityRouter
         return [
             'strategy' => 'single_agent',
             'agent_sequence' => [$singleAgent],
-            'reason' => "The request does not show a clear benefit from splitting; routing directly to {$singleAgent}.",
+            'reason' => $strategyOverride === 'single_agent'
+                ? "The user explicitly selected a single-agent route using {$singleAgent}."
+                : "The request does not show a clear benefit from splitting; routing directly to {$singleAgent}.",
             'intake_complexity' => $complexityEstimate,
         ];
     }

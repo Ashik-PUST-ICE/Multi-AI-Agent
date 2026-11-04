@@ -18,6 +18,7 @@ class EstimateTaskRequest extends FormRequest
     {
         return [
             'prompt' => ['required', 'string', 'max:20000'],
+            'routing_strategy' => ['sometimes', 'string', 'in:single_agent,multi_agent'],
             'max_cost' => ['sometimes', 'nullable', 'numeric', 'min:0.000001', 'max:1000000'],
             'agent_pack' => ['sometimes', 'nullable', 'string', 'max:64', 'regex:/^[a-z0-9]+(?:-[a-z0-9]+)*$/'],
             'knowledge_document_ids' => ['sometimes', 'array', 'max:100'],

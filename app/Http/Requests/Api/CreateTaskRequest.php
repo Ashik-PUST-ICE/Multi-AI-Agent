@@ -19,6 +19,7 @@ class CreateTaskRequest extends FormRequest
         return [
             'title' => ['required', 'string', 'max:255'],
             'prompt' => ['required', 'string', 'max:20000'],
+            'routing_strategy' => ['sometimes', 'string', 'in:single_agent,multi_agent'],
             'success_criteria' => ['sometimes', 'array', 'max:10'],
             'success_criteria.*' => ['required', 'string', 'max:500', 'distinct'],
             'plan_review' => ['sometimes', 'array'],

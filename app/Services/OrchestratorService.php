@@ -51,7 +51,11 @@ class OrchestratorService
     {
         $taskBrief = $this->intakeAnalyzer->analyze($data['prompt']);
         $matchedSkills = $this->skillMatcher->match($data['prompt'], $taskBrief);
-        $routing = $this->complexityRouter->route($data['prompt'], $taskBrief['complexity']['level']);
+        $routing = $this->complexityRouter->route(
+            $data['prompt'],
+            $taskBrief['complexity']['level'],
+            $data['routing_strategy'] ?? null,
+        );
         $routing['agent_sequence'][] = 'Skeptic';
         $planReview = $data['plan_review'] ?? [
             'required' => false,
@@ -249,7 +253,11 @@ class OrchestratorService
             $memoryContext,
         );
         $estimatedPrompt = $this->promptWithIntakeContext($estimatedPrompt, $taskBrief, $matchedSkills);
-        $routing = $this->complexityRouter->route($prompt, $taskBrief['complexity']['level']);
+        $routing = $this->complexityRouter->route(
+            $prompt,
+            $taskBrief['complexity']['level'],
+            $data['routing_strategy'] ?? null,
+        );
         $routing['agent_sequence'][] = 'Skeptic';
         $costEstimate = $this->taskCostEstimator->estimate(
             $user,
@@ -270,6 +278,20 @@ class OrchestratorService
             TASK_MODE_SANDBOX,
             AGENT_BRAIN_MODE_FIXED,
         );
+        $routingEstimates = [];
+        foreach (['single_agent', 'multi_agent'] as $strategy) {
+            $comparisonRouting = $this->complexityRouter->route(
+                $prompt,
+                $taskBrief['complexity']['level'],
+                $strategy,
+            );
+            $comparisonSequence = [...$comparisonRouting['agent_sequence'], 'Skeptic'];
+            $routingEstimates[$strategy] = $this->taskCostEstimator->estimate(
+                $user,
+                $estimatedPrompt,
+                $comparisonSequence,
+            );
+        }
         try {
             $costBudget = app(TaskCostBudgetService::class)->validateSubmission(
                 $user,
@@ -302,6 +324,7 @@ class OrchestratorService
             'routing_cost_comparison' => [
                 'auto' => $autoEstimate,
                 'fixed' => $fixedEstimate,
+                ...$routingEstimates,
                 'evaluation' => [
                     'status' => 'unavailable',
                     'reason' => 'A trusted evaluation test set and evaluation results are not available yet.',
