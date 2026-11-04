@@ -4,7 +4,7 @@ namespace App\Llm;
 
 use InvalidArgumentException;
 
-final class GeminiAdapter extends AbstractHttpLlmProvider
+final class GeminiAdapter extends AbstractHttpLlmProvider implements StreamingLlmProvider
 {
     public function __construct(
         string $baseUrl,
@@ -70,6 +70,94 @@ final class GeminiAdapter extends AbstractHttpLlmProvider
         $response = $this->post($path, ['x-goog-api-key' => $apiKey], $request);
 
         return $this->normalizer->fromGemini($response);
+    }
+
+    public function streamChat(
+        array $messages,
+        array $tools = [],
+        array $options = [],
+        ?callable $onTextChunk = null,
+    ): ChatResponse {
+        $model = $this->requireModel($options);
+        $systemInstructions = [];
+        $contents = [];
+
+        foreach ($messages as $message) {
+            $role = $message['role'] ?? 'user';
+            $content = $message['content'] ?? '';
+
+            if ($role === 'system') {
+                $systemInstructions[] = ['text' => (string) $content];
+
+                continue;
+            }
+
+            $contents[] = [
+                'role' => $role === 'assistant' ? 'model' : 'user',
+                'parts' => $this->formatParts($message),
+            ];
+        }
+
+        $request = ['contents' => $contents];
+        if ($systemInstructions !== []) {
+            $request['systemInstruction'] = ['parts' => $systemInstructions];
+        }
+        if ($tools !== []) {
+            $request['tools'] = [[
+                'functionDeclarations' => $this->formatTools($tools),
+            ]];
+        }
+
+        $generationConfig = [];
+        $maxTokens = $options['max_tokens'] ?? config('llm.max_tokens');
+        $temperature = $options['temperature'] ?? null;
+        if ($maxTokens !== null) {
+            $generationConfig['maxOutputTokens'] = $maxTokens;
+        }
+        if ($temperature !== null) {
+            $generationConfig['temperature'] = $temperature;
+        }
+        if ($generationConfig !== []) {
+            $request['generationConfig'] = $generationConfig;
+        }
+
+        $headers = ['x-goog-api-key' => $this->requireApiKey()];
+        $path = '/v1beta/models/'.rawurlencode($model).':streamGenerateContent?alt=sse';
+        $text = '';
+        $functionParts = [];
+        $usage = [];
+        $finishReason = 'unknown';
+
+        $this->streamPost($path, $headers, $request, function (array $event) use (&$text, &$functionParts, &$usage, &$finishReason, $onTextChunk): void {
+            $candidate = $event['candidates'][0] ?? [];
+            foreach ($candidate['content']['parts'] ?? [] as $part) {
+                if (isset($part['text']) && is_string($part['text'])) {
+                    $text .= $part['text'];
+                    if ($part['text'] !== '') {
+                        $onTextChunk !== null && $onTextChunk($part['text']);
+                    }
+                } elseif (isset($part['functionCall']) && is_array($part['functionCall'])) {
+                    $functionParts[] = ['functionCall' => $part['functionCall']];
+                }
+            }
+
+            if (is_array($event['usageMetadata'] ?? null)) {
+                $usage = $event['usageMetadata'];
+            }
+            if (is_string($candidate['finishReason'] ?? null)) {
+                $finishReason = $candidate['finishReason'];
+            }
+        });
+
+        $parts = $text === '' ? [] : [['text' => $text]];
+
+        return $this->normalizer->fromGemini([
+            'candidates' => [[
+                'content' => ['parts' => [...$parts, ...$functionParts]],
+                'finishReason' => $finishReason,
+            ]],
+            'usageMetadata' => $usage,
+        ]);
     }
 
     /**

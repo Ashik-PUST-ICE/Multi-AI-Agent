@@ -26,6 +26,7 @@ class Task extends Model
         'objective_sha256',
         'status',
         'mode',
+        'scheduled_task_run_id',
         'input',
         'result',
         'error_message',
@@ -101,5 +102,10 @@ class Task extends Model
     public function modeTransitions(): HasMany
     {
         return $this->hasMany(ModeTransition::class);
+    }
+
+    public function scheduledRun(): BelongsTo
+    {
+        return $this->belongsTo(ScheduledTaskRun::class, 'scheduled_task_run_id');
     }
 }

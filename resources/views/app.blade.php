@@ -96,6 +96,10 @@
                     <span aria-hidden="true">▤</span>
                     <span>ফাইল ও Memory</span>
                 </button>
+                <button class="navigation-link" data-view="admin" id="platform-admin-nav" type="button" hidden>
+                    <span aria-hidden="true">▥</span>
+                    <span>Admin</span>
+                </button>
             </nav>
 
             <div class="sidebar-footer">
@@ -159,6 +163,42 @@
                         </div>
                         <div class="task-estimate" id="task-estimate" role="status" hidden></div>
                     </form>
+
+                    <section class="panel task-schedules-panel" aria-labelledby="task-schedules-heading">
+                        <div class="list-heading">
+                            <div>
+                                <h2 id="task-schedules-heading">নির্ধারিত কাজ</h2>
+                                <p>সর্বোচ্চ ৯০ দিনের জন্য একবার, দৈনিক বা সাপ্তাহিক কাজ schedule করুন। প্রতিটি run Sandbox-এ শুরু হবে।</p>
+                            </div>
+                        </div>
+                        <form class="task-form" id="task-schedule-form">
+                            <label for="schedule-title">শিরোনাম</label>
+                            <input id="schedule-title" name="title" type="text" maxlength="255" required>
+                            <label for="schedule-prompt">কাজের নির্দেশনা</label>
+                            <textarea id="schedule-prompt" name="prompt" rows="3" maxlength="20000" required></textarea>
+                            <div class="schedule-fields">
+                                <label for="schedule-cadence">পুনরাবৃত্তি
+                                    <select id="schedule-cadence" name="cadence">
+                                        <option value="once">একবার</option>
+                                        <option value="daily">প্রতিদিন</option>
+                                        <option value="weekly">প্রতি সপ্তাহে</option>
+                                    </select>
+                                </label>
+                                <label for="schedule-starts-at">শুরুর সময়
+                                    <input id="schedule-starts-at" name="starts_at" type="datetime-local" required>
+                                </label>
+                                <label for="schedule-expires-at" id="schedule-expiry-field" hidden>পুনরাবৃত্তির শেষ সময়
+                                    <input id="schedule-expires-at" name="expires_at" type="datetime-local">
+                                </label>
+                            </div>
+                            <input id="schedule-timezone" name="timezone" type="hidden">
+                            <small class="form-help">সময় আপনার browser timezone অনুযায়ী। পুনরাবৃত্ত schedule-এর শেষ সময় বাধ্যতামূলক। প্রতিটি তৈরি task স্বাভাবিক approval ও trust policy মেনে চলে।</small>
+                            <button class="button button-primary" type="submit">Schedule সংরক্ষণ</button>
+                        </form>
+                        <div id="task-schedule-list" class="task-schedule-list" aria-live="polite">
+                            <div class="empty-state">Schedule দেখতে API token দিয়ে সংযুক্ত করুন।</div>
+                        </div>
+                    </section>
 
                     <div class="list-heading">
                         <div>
@@ -384,6 +424,57 @@
                             </div>
                         </form>
                     </section>
+
+                    <section class="panel brain-section" aria-labelledby="mcp-heading">
+                        <div class="brain-section-heading">
+                            <div>
+                                <h3 id="mcp-heading">MCP server connections</h3>
+                                <p>শুধু HTTPS, allowlisted public domain ও JSON Streamable HTTP endpoint। প্রতিটি tool আলাদা করে approve করুন; Live call-এর জন্য outbound Trust Level এবং exact call approval লাগবে। Auto কখনো MCP চালায় না।</p>
+                            </div>
+                        </div>
+                        <form id="mcp-server-form" class="task-form">
+                            <div class="brain-form-grid">
+                                <label class="brain-field" for="mcp-server-name"><span>Server name</span><input id="mcp-server-name" name="name" maxlength="120" required></label>
+                                <label class="brain-field" for="mcp-server-endpoint"><span>HTTPS endpoint (domain আগে allowlist করুন)</span><input id="mcp-server-endpoint" name="endpoint" type="url" maxlength="2048" placeholder="https://mcp.example.com/mcp" required></label>
+                                <label class="brain-field" for="mcp-server-token"><span>Optional bearer token (encrypted at rest)</span><input id="mcp-server-token" name="access_token" type="password" maxlength="4096" autocomplete="new-password"></label>
+                            </div>
+                            <div class="brain-save-row">
+                                <span>Server যোগ করলে tool catalog দেখা হবে, কিন্তু কোনো tool enabled হবে না।</span>
+                                <button class="button button-primary" type="submit">MCP server যোগ করুন</button>
+                            </div>
+                        </form>
+                        <div class="agent-directory" id="mcp-server-list" aria-live="polite">
+                            <div class="empty-state">MCP server তালিকা লোড হচ্ছে।</div>
+                        </div>
+                    </section>
+
+                    <section class="panel brain-section" aria-labelledby="api-integration-heading">
+                        <div class="brain-section-heading">
+                            <div>
+                                <h3 id="api-integration-heading">REST API ও webhook connections</h3>
+                                <p>আগে domain allowlist-এ থাকা HTTPS endpoint যোগ করুন। শুধু GET/POST scope, saved bearer token, owner enable এবং প্রতিটি exact call-এ approval চলে; Auto বন্ধ। Sandbox শুধু simulate করে।</p>
+                            </div>
+                        </div>
+                        <form id="api-integration-form" class="task-form">
+                            <div class="brain-form-grid">
+                                <label class="brain-field" for="api-integration-name"><span>Connection name</span><input id="api-integration-name" name="name" maxlength="120" required></label>
+                                <label class="brain-field" for="api-integration-endpoint"><span>HTTPS base endpoint</span><input id="api-integration-endpoint" name="endpoint" type="url" maxlength="2048" placeholder="https://api.example.com/v1" required></label>
+                                <label class="brain-field" for="api-integration-token"><span>Optional bearer token (encrypted at rest)</span><input id="api-integration-token" name="access_token" type="password" maxlength="4096" autocomplete="new-password"></label>
+                            </div>
+                            <fieldset class="task-knowledge-fieldset">
+                                <legend>Allowed methods</legend>
+                                <label><input type="checkbox" name="allowed_methods" value="GET" checked> GET (read)</label>
+                                <label><input type="checkbox" name="allowed_methods" value="POST"> POST (write; always approval)</label>
+                            </fieldset>
+                            <div class="brain-save-row">
+                                <span>New connections start disabled. DELETE, PUT, PATCH and arbitrary headers are not supported.</span>
+                                <button class="button button-primary" type="submit">REST connection যোগ করুন</button>
+                            </div>
+                        </form>
+                        <div class="agent-directory" id="api-integration-list" aria-live="polite">
+                            <div class="empty-state">REST connection তালিকা লোড হচ্ছে।</div>
+                        </div>
+                    </section>
                 </section>
 
                 <section class="view-panel" id="skills-view" aria-labelledby="skills-heading">
@@ -503,6 +594,11 @@
                         <div id="access-policy-list" class="knowledge-list"></div>
                         <p class="form-help">Lock, stove, gas, payment, transfer, purchase, email/message এবং access-settings tool কখনো Auto নয়। Undo window-সহ policy এখন approval বাধ্যতামূলক রাখে।</p>
                     </section>
+                    <section class="panel pack-section">
+                        <h3>Security audit history</h3>
+                        <p class="form-help">Access, trust, model, integration ও tool-approval সিদ্ধান্তের owner-only record।</p>
+                        <div id="audit-log-list" class="audit-log-list" aria-live="polite"></div>
+                    </section>
                 </section>
 
                 <section class="view-panel" id="notifications-view" aria-labelledby="notifications-heading">
@@ -606,6 +702,52 @@
                         <div id="memory-list" class="knowledge-list" aria-live="polite"><div class="empty-state">Memory লোড হচ্ছে।</div></div>
                     </section>
                 </section>
+
+                <section class="view-panel" id="admin-view" aria-labelledby="admin-heading">
+                    <div class="section-heading">
+                        <div>
+                            <p class="eyebrow">PLATFORM OPERATIONS</p>
+                            <h2 id="admin-heading">Admin dashboard</h2>
+                            <p class="section-description">Aggregate usage, prompt versions, evaluation comparisons এবং system alerts।</p>
+                        </div>
+                        <button class="button button-quiet button-small" id="admin-refresh" type="button">Refresh</button>
+                    </div>
+                    <div id="admin-alert-list" class="admin-alert-list" aria-live="polite"></div>
+                    <div id="admin-summary" class="admin-summary"></div>
+                    <div class="admin-grid">
+                        <section class="panel admin-panel">
+                            <h3>Active agents and prompt versions</h3>
+                            <div id="admin-agent-list" class="admin-list"></div>
+                        </section>
+                        <section class="panel admin-panel">
+                            <h3>Recent users</h3>
+                            <div id="admin-user-list" class="admin-list"></div>
+                        </section>
+                    </div>
+                    <section class="panel admin-panel">
+                        <h3>Create evaluation case</h3>
+                        <p class="form-help">Evaluation sends the case prompt and selected prompt version to the chosen user-approved models. Tools remain disabled; provider charges may apply.</p>
+                        <form id="admin-evaluation-case-form" class="admin-form">
+                            <input name="name" type="text" maxlength="120" placeholder="Case name" required>
+                            <select name="agent_name" id="admin-case-agent" required></select>
+                            <textarea name="prompt" rows="3" maxlength="4000" placeholder="Evaluation prompt" required></textarea>
+                            <textarea name="reference_answer" rows="3" maxlength="4000" placeholder="Reference answer (optional if criteria are supplied)"></textarea>
+                            <textarea name="criteria" rows="2" placeholder="One measurable criterion per line"></textarea>
+                            <button class="button button-primary" type="submit">Save evaluation case</button>
+                        </form>
+                    </section>
+                    <section class="panel admin-panel">
+                        <h3>Compare approved models and prompt versions</h3>
+                        <form id="admin-evaluation-run-form" class="admin-form">
+                            <label class="brain-field">Evaluation set (up to 5 cases from one agent)<select id="admin-evaluation-case" name="case_ids[]" multiple size="5" required></select></label>
+                            <label class="brain-field">Approved models (up to 3)<select id="admin-evaluation-models" multiple size="4" required></select></label>
+                            <label class="brain-field">Prompt versions for this agent (up to 2)<select id="admin-evaluation-versions" multiple size="4" required></select></label>
+                            <p class="form-help">Scoring is deterministic lexical token-F1 plus literal criterion coverage. It is useful for comparisons, not a semantic quality certification or automatic router signal.</p>
+                            <button class="button button-primary" type="submit">Run evaluation</button>
+                        </form>
+                        <div id="admin-evaluation-results" class="admin-list" aria-live="polite"></div>
+                    </section>
+                </section>
             </main>
 
             <footer class="page-footer">
@@ -639,6 +781,7 @@
             <button class="button button-quiet button-small" data-view="access" type="button">Access settings খুলুন</button>
             <button class="button button-quiet button-small" data-view="notifications" type="button">Notifications খুলুন</button>
             <button class="button button-quiet button-small" data-view="knowledge" type="button">ফাইল ও Memory খুলুন</button>
+            <button class="button button-quiet button-small" data-view="admin" id="platform-admin-more" type="button" hidden>Admin dashboard খুলুন</button>
         </div>
     </div>
 </body>

@@ -52,5 +52,10 @@ class DatabaseSeeder extends Seeder
             ['display_name' => 'Manage system security controls', 'module' => 1],
         );
         $adminRole->givePermissionTo($securityPermission);
+        $platformPermission = Permission::query()->firstOrCreate(
+            ['name' => 'platform.manage', 'guard_name' => 'web'],
+            ['display_name' => 'Manage platform dashboard and evaluations', 'module' => 1],
+        );
+        $adminRole->givePermissionTo($platformPermission);
     }
 }

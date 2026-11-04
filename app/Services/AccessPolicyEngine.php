@@ -57,6 +57,7 @@ class AccessPolicyEngine
         'password_form',
         'payment_form',
         'api_request',
+        'rest_request',
         'http_request',
     ];
 
@@ -175,6 +176,11 @@ class AccessPolicyEngine
                     static fn ($mode): int => ACCESS_MODE_USER,
                     [...($settings->agent_access_modes ?? []), $agentName => ACCESS_MODE_USER],
                 ),
+            ]);
+            app(AuditLogService::class)->record($user, 'access.auto_reverted', $settings, [
+                'agent_name' => $agentName,
+                'tool_name' => $toolName,
+                'reason' => $neverAuto ? 'never_auto_tool' : $policyFailureReason,
             ]);
             app(AgentActivityLogger::class)->recordEvent($agentRun, 'access.auto_reverted', [
                 'agent_name' => $agentName,

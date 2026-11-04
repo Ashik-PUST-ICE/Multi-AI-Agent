@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          extensions: bcmath, exif, gd, intl, mbstring, pcntl, pdo_mysql, pdo_sqlite, redis, zip
+          tools: composer:v2
+          coverage: none
+      - name: Install PHP dependencies
+        run: composer install --no-interaction --prefer-dist
+      - name: Run Laravel tests
+        run: php artisan test
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Build frontend
+        run: npm run build
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate deployment scripts
+        run: |
+          python -m py_compile scripts/backup.py scripts/restore.py scripts/load-test.py
+          python -m unittest discover -s scripts -p "test_*.py"
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build PHP application image
+        run: docker build --target app --tag multi-ai-agent:ci .
+      - name: Build web image
+        run: docker build --target web --tag multi-ai-agent-web:ci .

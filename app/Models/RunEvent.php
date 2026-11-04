@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Events\TaskProgressUpdated;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -9,6 +10,21 @@ class RunEvent extends Model
 {
     protected static function booted(): void
     {
+        static::created(function (self $event): void {
+            $task = $event->task ?? Task::query()->find($event->task_id);
+            $userId = $task?->user_id;
+
+            if ($task !== null && $userId !== null) {
+                event(new TaskProgressUpdated(
+                    (int) $task->id,
+                    (int) $userId,
+                    (int) $event->id,
+                    (string) $event->event_type,
+                    (int) $event->sequence,
+                ));
+            }
+        });
+
         static::creating(function (self $event): void {
             $agentRun = $event->agent_run_id === null
                 ? null

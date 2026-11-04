@@ -4,21 +4,32 @@ use App\Http\Controllers\Api\AccessController;
 use App\Http\Controllers\Api\AgentPackController;
 use App\Http\Controllers\Api\AgentSpecController;
 use App\Http\Controllers\Api\AgentTrustController;
+use App\Http\Controllers\Api\ApiIntegrationController;
+use App\Http\Controllers\Api\AuditLogController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\KnowledgeController;
 use App\Http\Controllers\Api\KnowledgeSystemSettingsController;
+use App\Http\Controllers\Api\McpServerController;
 use App\Http\Controllers\Api\NotificationResponseController;
 use App\Http\Controllers\Api\ObservabilityController;
+use App\Http\Controllers\Api\PlatformAdminController;
 use App\Http\Controllers\Api\ProviderSettingsController;
 use App\Http\Controllers\Api\SecurityControlController;
 use App\Http\Controllers\Api\SkillController;
 use App\Http\Controllers\Api\TaskController;
 use App\Http\Controllers\Api\TaskReplayShareController;
+use App\Http\Controllers\Api\TaskScheduleController;
 use App\Http\Controllers\Api\ToolApprovalController;
 use App\Http\Controllers\Api\WebAccessController;
 use App\Llm\ProviderCatalog;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Broadcast;
 use Illuminate\Support\Facades\Route;
+
+Broadcast::routes([
+    'prefix' => 'v1',
+    'middleware' => ['auth:sanctum', 'tenant', 'throttle:60,1'],
+]);
 
 Route::get('/v1/health', function () {
     return response()->json([
@@ -60,6 +71,8 @@ Route::prefix('/v1/auth')->name('api.v1.auth.')->group(function (): void {
 });
 
 Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
+    Route::get('/v1/audit-logs', [AuditLogController::class, 'index'])
+        ->name('api.v1.audit-logs.index');
     Route::post('/v1/auth/logout', [AuthController::class, 'logout'])
         ->name('api.v1.auth.logout');
     Route::get('/v1/trust', [AgentTrustController::class, 'index'])->name('api.v1.trust.index');
@@ -99,6 +112,31 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
         ->name('api.v1.web-access.update');
     Route::delete('/v1/web-access/search-key', [WebAccessController::class, 'deleteSearchKey'])
         ->name('api.v1.web-access.search-key.destroy');
+    Route::get('/v1/api-integrations', [ApiIntegrationController::class, 'index'])
+        ->name('api.v1.api-integrations.index');
+    Route::post('/v1/api-integrations', [ApiIntegrationController::class, 'store'])
+        ->middleware('throttle:10,1')
+        ->name('api.v1.api-integrations.store');
+    Route::put('/v1/api-integrations/{integration}/enabled', [ApiIntegrationController::class, 'setEnabled'])
+        ->whereNumber('integration')
+        ->name('api.v1.api-integrations.enabled');
+    Route::delete('/v1/api-integrations/{integration}', [ApiIntegrationController::class, 'destroy'])
+        ->whereNumber('integration')
+        ->name('api.v1.api-integrations.destroy');
+    Route::get('/v1/mcp-servers', [McpServerController::class, 'index'])->name('api.v1.mcp-servers.index');
+    Route::post('/v1/mcp-servers', [McpServerController::class, 'store'])
+        ->middleware('throttle:10,1')
+        ->name('api.v1.mcp-servers.store');
+    Route::put('/v1/mcp-servers/{server}/tools', [McpServerController::class, 'approveTools'])
+        ->whereNumber('server')
+        ->name('api.v1.mcp-servers.tools.update');
+    Route::post('/v1/mcp-servers/{server}/refresh', [McpServerController::class, 'refresh'])
+        ->whereNumber('server')
+        ->middleware('throttle:10,1')
+        ->name('api.v1.mcp-servers.refresh');
+    Route::delete('/v1/mcp-servers/{server}', [McpServerController::class, 'destroy'])
+        ->whereNumber('server')
+        ->name('api.v1.mcp-servers.destroy');
 
     Route::get('/v1/user', function (Request $request) {
         return response()->json([
@@ -106,6 +144,7 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
                 ...$request->user()->only(['id', 'name', 'email']),
                 'can_manage_knowledge_settings' => $request->user()->can('knowledge_settings.manage'),
                 'can_manage_security' => $request->user()->can('security.manage'),
+                'can_manage_platform' => $request->user()->can('platform.manage'),
             ],
         ]);
     });
@@ -185,12 +224,33 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
             Route::put('/kill-switch', 'updateSystemKillSwitch')->name('kill-switch.update');
         });
 
+    Route::prefix('/v1/admin/platform')
+        ->middleware('can:platform.manage')
+        ->name('api.v1.admin.platform.')
+        ->controller(PlatformAdminController::class)
+        ->group(function (): void {
+            Route::get('/dashboard', 'dashboard')->name('dashboard');
+            Route::get('/evaluations', 'evaluationData')->name('evaluations.index');
+            Route::post('/evaluations/cases', 'createEvaluationCase')->name('evaluations.cases.store');
+            Route::post('/evaluations/run', 'runEvaluation')
+                ->middleware('throttle:3,1')
+                ->name('evaluations.run');
+        });
+
     Route::post('/v1/tasks/estimate', [TaskController::class, 'estimate'])
         ->middleware('throttle:30,1')
         ->name('api.v1.tasks.estimate');
     Route::post('/v1/tasks', [TaskController::class, 'store'])
         ->middleware('throttle:10,1')
         ->name('api.v1.tasks.store');
+    Route::get('/v1/task-schedules', [TaskScheduleController::class, 'index'])
+        ->name('api.v1.task-schedules.index');
+    Route::post('/v1/task-schedules', [TaskScheduleController::class, 'store'])
+        ->middleware('throttle:10,1')
+        ->name('api.v1.task-schedules.store');
+    Route::delete('/v1/task-schedules/{schedule}', [TaskScheduleController::class, 'destroy'])
+        ->whereNumber('schedule')
+        ->name('api.v1.task-schedules.destroy');
     Route::get('/v1/tasks', [TaskController::class, 'index'])->name('api.v1.tasks.index');
     Route::get('/v1/observability/summary', [ObservabilityController::class, 'summary'])
         ->name('api.v1.observability.summary');

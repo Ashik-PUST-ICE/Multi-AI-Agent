@@ -8,6 +8,7 @@ use App\Models\UserAccessPolicy;
 use App\Models\UserAccessSetting;
 use App\Models\UserNotification;
 use App\Services\AccessPolicyEngine;
+use App\Services\AuditLogService;
 use App\Services\DeferredToolActionService;
 use App\Tools\ToolRegistry;
 use Illuminate\Http\JsonResponse;
@@ -21,6 +22,7 @@ class AccessController extends Controller
     public function __construct(
         private readonly AccessPolicyEngine $accessPolicyEngine,
         private readonly ToolRegistry $tools,
+        private readonly AuditLogService $auditLogService,
     ) {}
 
     public function show(Request $request): JsonResponse
@@ -78,6 +80,8 @@ class AccessController extends Controller
         }
 
         $settings = $this->settings($request->user());
+        $previousMode = $settings->access_mode;
+        $previousAgentModes = $settings->agent_access_modes ?? [];
         $settings->update([
             'access_mode' => $data['mode'] === 'auto' ? ACCESS_MODE_AUTO : ACCESS_MODE_USER,
             'agent_access_modes' => array_map(
@@ -91,6 +95,15 @@ class AccessController extends Controller
             'quiet_hours_end' => data_get($data, 'quiet_hours.end', $settings->quiet_hours_end),
             'digest_time' => array_key_exists('digest_time', $data) ? $data['digest_time'] : $settings->digest_time,
         ]);
+        if ($previousMode !== $settings->access_mode || $previousAgentModes !== ($settings->agent_access_modes ?? [])) {
+            $user = $request->user();
+            $this->auditLogService->record($user, 'access.settings.changed', $settings, [
+                'previous_mode' => $previousMode,
+                'mode' => $settings->access_mode,
+                'previous_agent_modes' => $previousAgentModes,
+                'agent_modes' => $settings->agent_access_modes ?? [],
+            ], $user);
+        }
 
         return response()->json(['access' => [
             'mode' => $this->modeName($settings->access_mode),
@@ -164,6 +177,15 @@ class AccessController extends Controller
             'status' => ACCESS_POLICY_STATUS_ACTIVE,
             'expires_at' => now()->addMinutes($data['expires_in_minutes']),
         ]);
+        $this->auditLogService->record($user, 'access.policy.granted', $policy, [
+            'agent_name' => $policy->agent_name,
+            'tool_name' => $policy->tool_name,
+            'scope' => $policy->scope,
+            'task_id' => $policy->task_id,
+            'maximum_uses' => $policy->maximum_uses,
+            'undo_window_seconds' => $policy->undo_window_seconds,
+            'expires_at' => $policy->expires_at?->toIso8601String(),
+        ], $user);
 
         return response()->json(['policy' => $this->policyData($policy)], 201);
     }
@@ -172,6 +194,12 @@ class AccessController extends Controller
     {
         $ownedPolicy = $request->user()->accessPolicies()->findOrFail($policy);
         $ownedPolicy->update(['status' => ACCESS_POLICY_STATUS_REVOKED]);
+        $user = $request->user();
+        $this->auditLogService->record($user, 'access.policy.revoked', $ownedPolicy, [
+            'agent_name' => $ownedPolicy->agent_name,
+            'tool_name' => $ownedPolicy->tool_name,
+            'scope' => $ownedPolicy->scope,
+        ], $user);
 
         return response()->json(['policy_id' => $ownedPolicy->id, 'status' => 'revoked']);
     }

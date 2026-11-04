@@ -21,6 +21,7 @@ class ToolApprovalService
     public function __construct(
         private readonly AgentActivityLogger $activityLogger,
         private readonly AgentRegistry $agentRegistry,
+        private readonly AuditLogService $auditLogService,
     ) {}
 
     public function pendingFor(User $user): JsonResponse
@@ -68,6 +69,12 @@ class ToolApprovalService
                     throw new HttpException(409, 'This action is in its undo window; wait for release or cancel it.');
                 }
                 app(DeferredToolActionService::class)->cancel($deferredAction->id, $user->id);
+                $this->auditLogService->record($user, 'tool.approval.decided', $approval, [
+                    'decision' => 'rejected',
+                    'tool_name' => $approval->payload['tool_name'] ?? null,
+                    'task_id' => $approval->task_id,
+                    'deferred' => true,
+                ], $user);
 
                 return [
                     'expired' => false,
@@ -95,6 +102,13 @@ class ToolApprovalService
             if ($agentRun === null || $task === null) {
                 throw new HttpException(409, 'The approval is no longer linked to an active task.');
             }
+            $this->auditLogService->record($user, 'tool.approval.decided', $approval, [
+                'decision' => $isApproved ? 'approved' : 'rejected',
+                'tool_name' => $approval->payload['tool_name'] ?? null,
+                'task_id' => $task->id,
+                'agent_run_id' => $agentRun->id,
+                'deferred' => false,
+            ], $user);
 
             if ($isApproved) {
                 $this->activityLogger->recordEvent($agentRun, 'tool.approval_granted', [
@@ -190,6 +204,13 @@ class ToolApprovalService
                     'decision_note' => $decisionNote,
                     'decided_at' => now(),
                 ]);
+                $this->auditLogService->record($user, 'tool.approval.decided', $approval, [
+                    'decision' => $isApproved ? 'approved' : 'rejected',
+                    'tool_name' => $approval->payload['tool_name'] ?? null,
+                    'task_id' => $task->id,
+                    'agent_run_id' => $agentRun->id,
+                    'batch' => true,
+                ], $user);
                 if ($isApproved) {
                     $this->activityLogger->recordEvent($agentRun, 'tool.approval_granted', [
                         'approval_id' => $approval->id,
@@ -271,6 +292,12 @@ class ToolApprovalService
 
         $agentRun = $approval->agentRun;
         $task = $approval->task;
+        if ($task?->user !== null) {
+            $this->auditLogService->record($task->user, 'tool.approval.expired', $approval, [
+                'tool_name' => $approval->payload['tool_name'] ?? null,
+                'task_id' => $task->id,
+            ]);
+        }
 
         if ($agentRun !== null && $task !== null) {
             $this->failApprovedTask($agentRun, $task, 'The requested tool approval expired.');

@@ -27,6 +27,7 @@ const elements = {
     agentAccessModes: document.querySelector('#agent-access-modes'),
     accessPolicyForm: document.querySelector('#access-policy-form'),
     accessPolicyList: document.querySelector('#access-policy-list'),
+    auditLogList: document.querySelector('#audit-log-list'),
     authError: document.querySelector('#auth-error'),
     authDescription: document.querySelector('#auth-description'),
     authEmail: document.querySelector('#auth-email'),
@@ -58,6 +59,21 @@ const elements = {
     knowledgeAdminSettingsForm: document.querySelector('#knowledge-admin-settings-form'),
     securityAdmin: document.querySelector('#security-admin'),
     systemKillSwitchButton: document.querySelector('#system-kill-switch-button'),
+    platformAdminNav: document.querySelector('#platform-admin-nav'),
+    platformAdminMore: document.querySelector('#platform-admin-more'),
+    adminView: document.querySelector('#admin-view'),
+    adminRefresh: document.querySelector('#admin-refresh'),
+    adminAlertList: document.querySelector('#admin-alert-list'),
+    adminSummary: document.querySelector('#admin-summary'),
+    adminAgentList: document.querySelector('#admin-agent-list'),
+    adminUserList: document.querySelector('#admin-user-list'),
+    adminEvaluationCaseForm: document.querySelector('#admin-evaluation-case-form'),
+    adminCaseAgent: document.querySelector('#admin-case-agent'),
+    adminEvaluationRunForm: document.querySelector('#admin-evaluation-run-form'),
+    adminEvaluationCase: document.querySelector('#admin-evaluation-case'),
+    adminEvaluationModels: document.querySelector('#admin-evaluation-models'),
+    adminEvaluationVersions: document.querySelector('#admin-evaluation-versions'),
+    adminEvaluationResults: document.querySelector('#admin-evaluation-results'),
     knowledgeUploadForm: document.querySelector('#knowledge-upload-form'),
     knowledgeDocumentList: document.querySelector('#knowledge-document-list'),
     taskKnowledgeDocuments: document.querySelector('#task-knowledge-documents'),
@@ -88,6 +104,12 @@ const elements = {
     applyTaskCriteria: document.querySelector('#apply-task-criteria'),
     taskDetail: document.querySelector('#task-detail'),
     taskForm: document.querySelector('#task-form'),
+    taskScheduleForm: document.querySelector('#task-schedule-form'),
+    taskScheduleList: document.querySelector('#task-schedule-list'),
+    scheduleCadence: document.querySelector('#schedule-cadence'),
+    scheduleExpiryField: document.querySelector('#schedule-expiry-field'),
+    scheduleExpiresAt: document.querySelector('#schedule-expires-at'),
+    scheduleTimezone: document.querySelector('#schedule-timezone'),
     taskMaxCost: document.querySelector('#task-max-cost'),
     taskList: document.querySelector('#task-list'),
     silentFailureCount: document.querySelector('#silent-failure-count'),
@@ -109,11 +131,18 @@ const elements = {
     webDeniedDomains: document.querySelector('#web-denied-domains'),
     webAccessStatus: document.querySelector('#web-access-status'),
     deleteWebSearchKey: document.querySelector('#delete-web-search-key'),
+    mcpServerForm: document.querySelector('#mcp-server-form'),
+    mcpServerList: document.querySelector('#mcp-server-list'),
+    apiIntegrationForm: document.querySelector('#api-integration-form'),
+    apiIntegrationList: document.querySelector('#api-integration-list'),
 };
 
 let apiToken = sessionStorage.getItem(TOKEN_STORAGE_KEY) || '';
 let selectedTaskId = null;
 let refreshTimer = null;
+let realtimeRefreshTimer = null;
+let taskEcho = null;
+let liveResponseDraft = null;
 let pendingTaskConfirmation = null;
 let brainSettings = null;
 let brainCatalog = {};
@@ -124,6 +153,10 @@ let embeddingCatalog = {};
 let knowledgeDocuments = [];
 let canManageKnowledgeSettings = false;
 let canManageSecurity = false;
+let canManagePlatform = false;
+let adminEvaluationData = null;
+let adminEvaluationRefreshTimer = null;
+let adminEvaluationRefreshAttempts = 0;
 let systemKillSwitchEnabled = false;
 let authMode = 'login';
 const AGENT_LABELS = {
@@ -256,16 +289,62 @@ async function publicApiRequest(path, options = {}) {
 }
 
 async function activateToken(token, displayName = '') {
+    if (apiToken !== token) {
+        taskEcho?.disconnect();
+        taskEcho = null;
+        selectedTaskId = null;
+        liveResponseDraft = null;
+        adminEvaluationData = null;
+        window.clearTimeout(adminEvaluationRefreshTimer);
+        adminEvaluationRefreshTimer = null;
+        adminEvaluationRefreshAttempts = 0;
+        elements.adminView.classList.remove('is-visible');
+        elements.platformAdminNav.hidden = true;
+        elements.platformAdminMore.hidden = true;
+        window.clearTimeout(refreshTimer);
+        window.clearTimeout(realtimeRefreshTimer);
+    }
     apiToken = token;
     const userResponse = await apiRequest('/user');
     sessionStorage.setItem(TOKEN_STORAGE_KEY, apiToken);
     elements.accountName.textContent = displayName || userResponse.user.name;
     canManageKnowledgeSettings = userResponse.user.can_manage_knowledge_settings === true;
     canManageSecurity = userResponse.user.can_manage_security === true;
+    canManagePlatform = userResponse.user.can_manage_platform === true;
+    elements.platformAdminNav.hidden = !canManagePlatform;
+    elements.platformAdminMore.hidden = !canManagePlatform;
     setConnected(true);
-    await Promise.all([loadTasks(), loadApprovals(), loadAccess(), loadNotifications()]);
+    connectTaskRealtime(userResponse.user.id);
+    await Promise.all([loadTasks(), loadApprovals(), loadAccess(), loadNotifications(), loadTaskSchedules()]);
     await loadAgentPacks();
     await loadKnowledge();
+}
+
+function connectTaskRealtime(userId) {
+    taskEcho?.disconnect();
+    taskEcho = window.createTaskEcho?.(apiToken) || null;
+    if (!taskEcho) {
+        return;
+    }
+
+    taskEcho.private(`user.${userId}`).listen('.task.progress.updated', () => {
+        window.clearTimeout(realtimeRefreshTimer);
+        realtimeRefreshTimer = window.setTimeout(() => {
+            loadTasks().catch((error) => showNotice(elements.error, error.message));
+        }, 200);
+    });
+    taskEcho.private(`user.${userId}`).listen('.task.response.chunk', receiveTaskResponseChunk);
+    taskEcho.connector.pusher.connection.bind('state_change', ({ current }) => {
+        if (current === 'connected') {
+            window.clearTimeout(refreshTimer);
+        } else {
+            scheduleTaskRefresh();
+        }
+    });
+}
+
+function isTaskRealtimeConnected() {
+    return taskEcho?.connector?.pusher?.connection?.state === 'connected';
 }
 
 function switchView(viewName) {
@@ -280,6 +359,7 @@ function switchView(viewName) {
         knowledge: 'ফাইল ও Memory',
         access: 'Access policy',
         notifications: 'Notifications',
+        admin: 'Admin dashboard',
     };
 
     elements.views.forEach((view) => {
@@ -299,6 +379,8 @@ function switchView(viewName) {
     }
     if (selectedView === 'brain' && apiToken) {
         loadWebAccessSettings().catch((error) => showNotice(elements.error, error.message));
+        loadMcpServers().catch((error) => showNotice(elements.error, error.message));
+        loadApiIntegrations().catch((error) => showNotice(elements.error, error.message));
     }
 
     if (selectedView === 'agents' && apiToken) {
@@ -321,12 +403,147 @@ function switchView(viewName) {
     if (selectedView === 'notifications' && apiToken) {
         loadNotifications().catch((error) => showNotice(elements.error, error.message));
     }
+
+    if (selectedView === 'admin' && apiToken && canManagePlatform) {
+        loadPlatformAdmin().catch((error) => showNotice(elements.error, error.message));
+    }
+}
+
+async function loadPlatformAdmin() {
+    const [dashboard, evaluations] = await Promise.all([
+        apiRequest('/admin/platform/dashboard'),
+        apiRequest('/admin/platform/evaluations'),
+    ]);
+    adminEvaluationData = evaluations;
+    renderPlatformDashboard(dashboard);
+    renderEvaluationAdmin(evaluations);
+}
+
+function renderPlatformDashboard(dashboard) {
+    const summary = dashboard.summary || {};
+    const spend = Object.entries(summary.estimated_spend_30d || {})
+        .map(([currency, amount]) => `${Number(amount).toFixed(4)} ${escapeHtml(currency)}`)
+        .join(', ') || 'unpriced / no recorded spend';
+    const metrics = [
+        ['Users', summary.users],
+        ['Tasks', summary.tasks],
+        ['Completed in 24h', summary.completed_tasks_24h],
+        ['Failed in 24h', summary.failed_tasks_24h],
+        ['LLM calls in 30d', summary.llm_calls_30d],
+        ['Estimated spend in 30d', spend],
+    ];
+    elements.adminSummary.innerHTML = metrics.map(([label, value]) => `
+        <article class="admin-metric"><small>${escapeHtml(label)}</small><strong>${escapeHtml(value ?? 0)}</strong></article>
+    `).join('');
+
+    const alerts = dashboard.alerts || [];
+    elements.adminAlertList.innerHTML = alerts.length === 0
+        ? '<div class="empty-state">No active alerts.</div>'
+        : alerts.map((alert) => `
+            <article class="admin-alert">
+                <strong>${escapeHtml(alert.type.replaceAll('_', ' '))}</strong>
+                <span>${escapeHtml(alert.message)}</span>
+                ${alert.failed_tasks_24h !== undefined ? `<small>Failed tasks: ${escapeHtml(alert.failed_tasks_24h)} · failed queue jobs: ${escapeHtml(alert.failed_queue_jobs)}</small>` : ''}
+                ${alert.tasks ? `<small>Budget watch task IDs: ${escapeHtml(alert.tasks.map((task) => task.task_id).join(', '))}</small>` : ''}
+                ${alert.currency ? `<small>${escapeHtml(alert.currency)}: today ${escapeHtml(alert.today)} · recent daily average ${escapeHtml(alert.average_daily)}</small>` : ''}
+            </article>
+        `).join('');
+    elements.adminAgentList.innerHTML = (dashboard.active_agent_specs || []).map((spec) => `
+        <article class="admin-list-item"><strong>${escapeHtml(spec.agent_name)}</strong><span>Active prompt v${escapeHtml(spec.version)}</span></article>
+    `).join('') || '<div class="empty-state">No active agent specifications.</div>';
+    elements.adminUserList.innerHTML = (dashboard.recent_users || []).map((user) => `
+        <article class="admin-list-item"><strong>${escapeHtml(user.name)}</strong><span>${escapeHtml(user.email)} · ${escapeHtml(formatDate(user.created_at))}</span></article>
+    `).join('') || '<div class="empty-state">No users found.</div>';
+}
+
+function renderEvaluationAdmin(data) {
+    const cases = data.cases || [];
+    const selectedCases = [...elements.adminEvaluationCase.selectedOptions].map((option) => Number(option.value));
+    elements.adminEvaluationCase.innerHTML = cases.map((item) => `
+        <option value="${escapeHtml(item.id)}">${escapeHtml(item.name)} · ${escapeHtml(item.agent_name)}</option>
+    `).join('') || '<option value="">Create an evaluation case first</option>';
+    selectedCases.forEach((id) => {
+        const option = [...elements.adminEvaluationCase.options].find((item) => Number(item.value) === id);
+        if (option) {
+            option.selected = true;
+        }
+    });
+
+    const agentNames = [...new Set((data.specifications || []).map((spec) => spec.agent_name))];
+    const selectedAgent = elements.adminCaseAgent.value;
+    elements.adminCaseAgent.innerHTML = agentNames.map((name) => `
+        <option value="${escapeHtml(name)}">${escapeHtml(name)}</option>
+    `).join('');
+    if (agentNames.includes(selectedAgent)) {
+        elements.adminCaseAgent.value = selectedAgent;
+    }
+    elements.adminEvaluationModels.innerHTML = (data.approved_models || [])
+        .filter((model) => model.credentials_configured)
+        .map((model) => {
+            const value = JSON.stringify({ provider: model.provider, model: model.model });
+            return `<option value="${escapeHtml(value)}">${escapeHtml(model.provider)}/${escapeHtml(model.model)}</option>`;
+        }).join('') || '<option value="">Approve a model and configure its credentials in Brain settings</option>';
+    renderEvaluationVersions();
+    renderEvaluationResults(data.results || []);
+}
+
+function renderEvaluationVersions() {
+    if (!adminEvaluationData) {
+        return;
+    }
+    const selectedCaseIds = [...elements.adminEvaluationCase.selectedOptions].map((option) => Number(option.value));
+    const selectedCases = (adminEvaluationData.cases || []).filter((item) => selectedCaseIds.includes(item.id));
+    const selectedAgents = [...new Set(selectedCases.map((item) => item.agent_name))];
+    if (selectedAgents.length > 1) {
+        elements.adminEvaluationVersions.innerHTML = '<option value="">Choose cases from one agent</option>';
+        return;
+    }
+    const agentName = selectedAgents[0] || elements.adminCaseAgent.value;
+    const selectedVersions = [...elements.adminEvaluationVersions.selectedOptions].map((option) => option.value);
+    const versions = (adminEvaluationData.specifications || [])
+        .filter((spec) => spec.agent_name === agentName);
+    elements.adminEvaluationVersions.innerHTML = versions.map((spec) => `
+        <option value="${escapeHtml(spec.version)}">${escapeHtml(spec.agent_name)} v${escapeHtml(spec.version)} · status ${escapeHtml(spec.status)}</option>
+    `).join('');
+    selectedVersions.forEach((version) => {
+        const option = [...elements.adminEvaluationVersions.options].find((item) => item.value === version);
+        if (option) {
+            option.selected = true;
+        }
+    });
+}
+
+function renderEvaluationResults(results) {
+    elements.adminEvaluationResults.innerHTML = results.length === 0
+        ? '<div class="empty-state">No evaluation results yet.</div>'
+        : results.map((result) => `
+            <article class="admin-result">
+                <strong>${escapeHtml(result.case_name || 'Evaluation')} · ${escapeHtml(result.provider)}/${escapeHtml(result.model)} · prompt v${escapeHtml(result.agent_spec_version)}</strong>
+                <span>Status: ${escapeHtml(result.status)} · score: ${escapeHtml(result.score ?? '—')} · ${escapeHtml(result.duration_ms)} ms · ${escapeHtml(result.token_usage?.total_tokens || 0)} tokens${result.cost_amount !== null ? ` · ${escapeHtml(result.cost_amount)} ${escapeHtml(result.cost_currency)}` : ''}</span>
+                <small>Token F1: ${escapeHtml(result.metrics?.token_f1 ?? '—')} · criterion coverage: ${escapeHtml(result.metrics?.criteria_coverage ?? '—')}%</small>
+                ${result.error_message ? `<p>${escapeHtml(result.error_message)}</p>` : ''}
+                ${result.output ? `<details><summary>Model output</summary><pre>${escapeHtml(result.output)}</pre></details>` : ''}
+            </article>
+        `).join('');
+    if (results.some((result) => ['pending', 'running'].includes(result.status))
+        && adminEvaluationRefreshAttempts < 150) {
+        window.clearTimeout(adminEvaluationRefreshTimer);
+        adminEvaluationRefreshTimer = window.setTimeout(() => {
+            adminEvaluationRefreshAttempts++;
+            loadPlatformAdmin().catch((error) => showNotice(elements.error, error.message));
+        }, 2000);
+    } else {
+        window.clearTimeout(adminEvaluationRefreshTimer);
+        adminEvaluationRefreshTimer = null;
+        adminEvaluationRefreshAttempts = 0;
+    }
 }
 
 async function loadAccess() {
-    const [responseData, channelData] = await Promise.all([
+    const [responseData, channelData, auditData] = await Promise.all([
         apiRequest('/access'),
         apiRequest('/notifications/channels'),
+        apiRequest('/audit-logs'),
     ]);
     const access = responseData.access || {};
     elements.accessMode.value = access.mode || 'user';
@@ -349,12 +566,32 @@ async function loadAccess() {
         </label>
     `).join('');
     renderAccessPolicies(responseData.policies || []);
+    renderAuditLogs(auditData.audit_logs || []);
     document.querySelector('#enable-push-channel').checked = channelData.channels?.push?.enabled === true;
     const configuredChannels = Object.entries(channelData.channels || {})
         .map(([name, value]) => `<p>${escapeHtml(name)}: ${value.configured ? 'configured' : 'missing'} · ${value.enabled ? 'enabled' : 'disabled'}</p>`);
     const pushSubscriptionStatus = `<p>Push subscriptions: ${escapeHtml(channelData.push_subscriptions || 0)}</p>`;
     elements.notificationChannelStatus.innerHTML = [...configuredChannels, pushSubscriptionStatus].join('');
     elements.notificationChannelStatus.dataset.pushPublicKey = channelData.push_public_key || '';
+}
+
+function renderAuditLogs(entries) {
+    if (!elements.auditLogList) {
+        return;
+    }
+    if (entries.length === 0) {
+        elements.auditLogList.innerHTML = '<div class="empty-state">এখনো কোনো security decision record নেই।</div>';
+        return;
+    }
+
+    elements.auditLogList.innerHTML = entries.map((entry) => `
+        <article class="audit-entry">
+            <strong>${escapeHtml(entry.action)}</strong>
+            <small>${escapeHtml(entry.actor.type)}${entry.actor.id ? ` #${escapeHtml(entry.actor.id)}` : ''} · ${escapeHtml(formatDate(entry.created_at))}</small>
+            <span>${escapeHtml(entry.subject_type || 'system')}${entry.subject_id ? ` #${escapeHtml(entry.subject_id)}` : ''}</span>
+            <pre>${escapeHtml(JSON.stringify(entry.metadata || {}) || '{}')}</pre>
+        </article>
+    `).join('');
 }
 
 function renderAccessPolicies(policies) {
@@ -438,9 +675,14 @@ function renderAgentRuns(agentRuns = [], routing = null, taskId = null) {
         const agentRun = agentRunByName.get(agentName);
         const status = agentRun?.status ?? 0;
         const outputText = agentRun?.output?.text;
+        const hasLiveDraft = liveResponseDraft
+            && String(liveResponseDraft.taskId) === String(taskId)
+            && String(liveResponseDraft.agentRunId) === String(agentRun?.id);
+        const streamedText = hasLiveDraft ? liveResponseDraft.text : '';
         const errorMessage = agentRun?.error_message;
-        const extra = outputText || errorMessage
-            ? `<p class="stage-output">${escapeHtml(outputText || errorMessage)}</p>`
+        const visibleText = outputText || streamedText || errorMessage;
+        const extra = visibleText
+            ? `<p class="stage-output ${!outputText && streamedText ? 'is-streaming' : ''}">${!outputText && streamedText ? '<small>লাইভ খসড়া · </small>' : ''}${escapeHtml(visibleText)}</p>`
             : '';
         const replayAction = agentRun && [2, 3].includes(agentRun.status)
             ? `<button class="button button-quiet button-small" type="button" data-resume-agent-run-id="${escapeHtml(agentRun.id)}">এই ধাপটি Sandbox-এ আবার চালান</button>`
@@ -448,9 +690,12 @@ function renderAgentRuns(agentRuns = [], routing = null, taskId = null) {
         const killAction = agentRun && [0, 1].includes(agentRun.status)
             ? `<button class="button button-quiet button-small" type="button" data-kill-agent-run-id="${escapeHtml(agentRun.id)}" data-task-id="${escapeHtml(taskId)}">এই agent থামান</button>`
             : '';
+        if (hasLiveDraft && agentRun?.status === 2) {
+            liveResponseDraft = null;
+        }
 
         return `
-            <div class="agent-stage status-${escapeHtml(status)}">
+            <div class="agent-stage status-${escapeHtml(status)}" data-agent-run-id="${escapeHtml(agentRun?.id ?? '')}">
                 <span class="stage-icon" aria-hidden="true">${agentRun?.status === 2 ? '✓' : index + 1}</span>
                 <span class="stage-name">${escapeHtml(agentName)}</span>
                 <span class="status-chip status-${escapeHtml(status)}">${escapeHtml(statusLabel(status))}</span>
@@ -460,6 +705,51 @@ function renderAgentRuns(agentRuns = [], routing = null, taskId = null) {
             </div>
         `;
     }).join('');
+}
+
+function receiveTaskResponseChunk(chunk) {
+    if (!chunk || String(chunk.task_id) !== String(selectedTaskId) || typeof chunk.text !== 'string') {
+        return;
+    }
+
+    const sequence = Number(chunk.sequence);
+    if (!Number.isInteger(sequence) || sequence < 0) {
+        return;
+    }
+
+    if (!liveResponseDraft || liveResponseDraft.streamId !== chunk.stream_id) {
+        liveResponseDraft = {
+            taskId: chunk.task_id,
+            agentRunId: chunk.agent_run_id,
+            streamId: chunk.stream_id,
+            sequence: -1,
+            text: '',
+        };
+    }
+
+    if (sequence <= liveResponseDraft.sequence) {
+        return;
+    }
+
+    liveResponseDraft.sequence = sequence;
+    liveResponseDraft.text += chunk.text;
+    const stage = [...elements.taskDetail.querySelectorAll('.agent-stage')]
+        .find((element) => element.dataset.agentRunId === String(chunk.agent_run_id));
+    if (!stage) {
+        return;
+    }
+
+    let output = stage.querySelector('.stage-output');
+    if (liveResponseDraft.text === '') {
+        output?.remove();
+        return;
+    }
+    if (!output) {
+        output = document.createElement('p');
+        output.className = 'stage-output is-streaming';
+        stage.append(output);
+    }
+    output.textContent = `লাইভ খসড়া · ${liveResponseDraft.text}`;
 }
 
 function renderTaskDetail(task) {
@@ -622,13 +912,50 @@ async function loadTasks() {
     }
 
     const hasActiveTask = tasks.some((task) => task.status === 0 || task.status === 1);
-    if (hasActiveTask) {
+    if (hasActiveTask && !isTaskRealtimeConnected()) {
         scheduleTaskRefresh();
     } else {
         window.clearTimeout(refreshTimer);
+        window.clearTimeout(realtimeRefreshTimer);
     }
 
     await loadObservabilitySummary();
+}
+
+async function loadTaskSchedules() {
+    if (!apiToken || !elements.taskScheduleList) {
+        return;
+    }
+
+    const responseData = await apiRequest('/task-schedules');
+    const schedules = responseData.schedules || [];
+    if (schedules.length === 0) {
+        elements.taskScheduleList.innerHTML = '<div class="empty-state">কোনো নির্ধারিত কাজ নেই।</div>';
+        return;
+    }
+
+    const cadenceLabels = { once: 'একবার', daily: 'প্রতিদিন', weekly: 'প্রতি সপ্তাহে' };
+    const runLabels = {
+        0: 'অপেক্ষমাণ',
+        1: 'চলছে',
+        2: 'Task তৈরি',
+        3: 'সময় পেরিয়ে যাওয়ায় বাদ',
+        4: 'ব্যর্থ',
+        5: 'বাতিল',
+    };
+    elements.taskScheduleList.innerHTML = schedules.map((schedule) => `
+        <article class="task-schedule-card">
+            <div>
+                <h3>${escapeHtml(schedule.title)}</h3>
+                <p>${escapeHtml(cadenceLabels[schedule.cadence] || schedule.cadence)} · পরের run: ${escapeHtml(formatDate(schedule.next_run_at))}</p>
+                ${schedule.expires_at ? `<small>শেষ: ${escapeHtml(formatDate(schedule.expires_at))} · ${escapeHtml(schedule.timezone)}</small>` : ''}
+                ${(schedule.runs || []).slice(0, 3).map((run) => `
+                    <small>Run ${escapeHtml(formatDate(run.scheduled_for))}: ${escapeHtml(runLabels[run.status] || 'অজানা')}${run.task_id ? ` · Task #${escapeHtml(run.task_id)}` : ''}${run.error_message ? ` · ${escapeHtml(run.error_message)}` : ''}</small>
+                `).join('')}
+            </div>
+            ${schedule.can_cancel ? `<button class="button button-danger button-small" type="button" data-cancel-task-schedule="${escapeHtml(schedule.id)}">বাতিল</button>` : '<span class="status-chip">বন্ধ</span>'}
+        </article>
+    `).join('');
 }
 
 async function loadObservabilitySummary() {
@@ -968,26 +1295,6 @@ async function loadBrainSettings() {
         return;
     }
 
-    async function loadWebAccessSettings() {
-        if (!apiToken || !elements.webAccessForm) {
-            return;
-        }
-
-        const responseData = await apiRequest('/web-access');
-        const settings = responseData.web_access || {};
-        elements.webSearchProvider.value = settings.search_provider || '';
-        elements.webSearchApiKey.value = '';
-        elements.webAllowedDomains.value = (settings.allowed_domains || []).join('\n');
-        elements.webDeniedDomains.value = (settings.denied_domains || []).join('\n');
-        elements.webAccessStatus.textContent = settings.has_search_api_key
-            ? 'Search key সেভ করা আছে; নিরাপত্তার জন্য key আর দেখানো হয় না।'
-            : 'Search provider চালু করতে Settings-এ আপনার API key দিন।';
-    }
-
-    function parseDomainList(value) {
-        return [...new Set(value.split(/\r?\n/).map((domain) => domain.trim().toLowerCase()).filter(Boolean))];
-    }
-
     const responseData = await apiRequest('/llm/settings');
     brainSettings = responseData.settings || {};
     brainCatalog = responseData.catalog || {};
@@ -1009,6 +1316,86 @@ async function loadBrainSettings() {
     renderBrainSelectors();
     renderProviderKeys();
     renderAgentDirectory();
+}
+
+async function loadWebAccessSettings() {
+    if (!apiToken || !elements.webAccessForm) {
+        return;
+    }
+
+    const responseData = await apiRequest('/web-access');
+    const settings = responseData.web_access || {};
+    elements.webSearchProvider.value = settings.search_provider || '';
+    elements.webSearchApiKey.value = '';
+    elements.webAllowedDomains.value = (settings.allowed_domains || []).join('\n');
+    elements.webDeniedDomains.value = (settings.denied_domains || []).join('\n');
+    elements.webAccessStatus.textContent = settings.has_search_api_key
+        ? 'Search key সেভ করা আছে; নিরাপত্তার জন্য key আর দেখানো হয় না।'
+        : 'Search provider চালু করতে Settings-এ আপনার API key দিন।';
+}
+
+function parseDomainList(value) {
+    return [...new Set(value.split(/\r?\n/).map((domain) => domain.trim().toLowerCase()).filter(Boolean))];
+}
+
+async function loadMcpServers() {
+    if (!apiToken || !elements.mcpServerList) {
+        return;
+    }
+
+    const responseData = await apiRequest('/mcp-servers');
+    const servers = responseData.servers || [];
+    elements.mcpServerList.innerHTML = servers.length
+        ? servers.map((server) => {
+            const tools = (server.discovered_tools || []).map((tool) => `
+                <label class="pack-agent-choice">
+                    <input type="checkbox" data-mcp-tool="${escapeHtml(tool.name)}"
+                        ${server.approved_tools.includes(tool.name) ? 'checked' : ''}>
+                    <span><strong>${escapeHtml(tool.name)}</strong> — ${escapeHtml(tool.description || 'No description')}</span>
+                </label>
+            `).join('');
+
+            return `<article class="agent-pack-card" data-mcp-server="${server.id}">
+                <div>
+                    <h4>${escapeHtml(server.name)} ${server.enabled ? '<small>Enabled</small>' : '<small>Disabled</small>'}</h4>
+                    <p>${escapeHtml(server.endpoint)} · ${server.has_access_token ? 'Bearer token saved' : 'No bearer token'}</p>
+                    <div class="pack-agent-choices">${tools || '<p>কোনো usable tool পাওয়া যায়নি।</p>'}</div>
+                </div>
+                <div class="agent-pack-actions">
+                    <button class="button button-primary button-small" type="button" data-mcp-save="${server.id}">Approve selected</button>
+                    <button class="button button-quiet button-small" type="button" data-mcp-refresh="${server.id}">Refresh catalog</button>
+                    <button class="button button-quiet button-small" type="button" data-mcp-delete="${server.id}">Remove</button>
+                </div>
+            </article>`;
+        }).join('')
+        : '<div class="empty-state">কোনো MCP server নেই।</div>';
+}
+
+async function loadApiIntegrations() {
+    if (!apiToken || !elements.apiIntegrationList) {
+        return;
+    }
+
+    const responseData = await apiRequest('/api-integrations');
+    const integrations = responseData.integrations || [];
+    elements.apiIntegrationList.innerHTML = integrations.length
+        ? integrations.map((integration) => `
+            <article class="agent-pack-card" data-api-integration="${integration.id}">
+                <div>
+                    <h4>${escapeHtml(integration.name)} ${integration.enabled ? '<small>Enabled</small>' : '<small>Disabled</small>'}</h4>
+                    <p>${escapeHtml(integration.endpoint)} · ${integration.allowed_methods.map(escapeHtml).join(', ')}
+                        · ${integration.has_access_token ? 'Bearer token saved' : 'No bearer token'}</p>
+                </div>
+                <div class="agent-pack-actions">
+                    <button class="button button-quiet button-small" type="button"
+                        data-api-integration-toggle="${integration.id}" data-enabled="${integration.enabled ? 'false' : 'true'}">
+                        ${integration.enabled ? 'Disable' : 'Enable'}
+                    </button>
+                    <button class="button button-quiet button-small" type="button" data-api-integration-delete="${integration.id}">Remove</button>
+                </div>
+            </article>
+        `).join('')
+        : '<div class="empty-state">কোনো REST connection নেই।</div>';
 }
 
 function renderAgentPacks() {
@@ -1755,6 +2142,157 @@ elements.fallbackModel.addEventListener('change', () => {
     elements.fallbackProvider.value = elements.fallbackModel.value;
 });
 
+elements.webAccessForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    clearNotices();
+
+    try {
+        const provider = elements.webSearchProvider.value || null;
+        const apiKey = elements.webSearchApiKey.value.trim();
+        await apiRequest('/web-access', {
+            method: 'PUT',
+            body: JSON.stringify({
+                search_provider: provider,
+                ...(apiKey ? { search_api_key: apiKey } : {}),
+                allowed_domains: parseDomainList(elements.webAllowedDomains.value),
+                denied_domains: parseDomainList(elements.webDeniedDomains.value),
+            }),
+        });
+        elements.webSearchApiKey.value = '';
+        await loadWebAccessSettings();
+        showNotice(elements.success, 'Web access settings সেভ হয়েছে।');
+    } catch (error) {
+        showNotice(elements.error, error.message);
+    }
+});
+
+elements.deleteWebSearchKey.addEventListener('click', async () => {
+    if (!window.confirm('সেভ করা search API key মুছে Live web search বন্ধ করবেন?')) {
+        return;
+    }
+
+    try {
+        await apiRequest('/web-access/search-key', { method: 'DELETE' });
+        await loadWebAccessSettings();
+        showNotice(elements.success, 'Search API key মুছে দেওয়া হয়েছে।');
+    } catch (error) {
+        showNotice(elements.error, error.message);
+    }
+});
+
+elements.mcpServerForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    clearNotices();
+    const formData = new FormData(elements.mcpServerForm);
+    const accessToken = String(formData.get('access_token') || '').trim();
+
+    try {
+        await apiRequest('/mcp-servers', {
+            method: 'POST',
+            body: JSON.stringify({
+                name: String(formData.get('name') || '').trim(),
+                endpoint: String(formData.get('endpoint') || '').trim(),
+                ...(accessToken ? { access_token: accessToken } : {}),
+            }),
+        });
+        elements.mcpServerForm.reset();
+        await loadMcpServers();
+        showNotice(elements.success, 'MCP catalog লোড হয়েছে; কোনো tool এখনও approve করা হয়নি।');
+    } catch (error) {
+        showNotice(elements.error, error.message);
+    }
+});
+
+elements.mcpServerList.addEventListener('click', async (event) => {
+    const saveButton = event.target.closest('[data-mcp-save]');
+    const refreshButton = event.target.closest('[data-mcp-refresh]');
+    const deleteButton = event.target.closest('[data-mcp-delete]');
+    const button = saveButton || refreshButton || deleteButton;
+    if (!button) {
+        return;
+    }
+    const serverId = button.dataset.mcpSave || button.dataset.mcpRefresh || button.dataset.mcpDelete;
+    const serverCard = button.closest('[data-mcp-server]');
+
+    try {
+        if (saveButton) {
+            const approvedTools = [...serverCard.querySelectorAll('[data-mcp-tool]:checked')]
+                .map((input) => input.dataset.mcpTool);
+            await apiRequest(`/mcp-servers/${serverId}/tools`, {
+                method: 'PUT',
+                body: JSON.stringify({ approved_tools: approvedTools, enabled: approvedTools.length > 0 }),
+            });
+        } else if (refreshButton) {
+            await apiRequest(`/mcp-servers/${serverId}/refresh`, { method: 'POST' });
+        } else {
+            if (!window.confirm('এই MCP server, credential এবং tool approvals মুছবেন?')) {
+                return;
+            }
+            await apiRequest(`/mcp-servers/${serverId}`, { method: 'DELETE' });
+        }
+        await loadMcpServers();
+        showNotice(elements.success, 'MCP server settings আপডেট হয়েছে।');
+    } catch (error) {
+        showNotice(elements.error, error.message);
+    }
+});
+
+elements.apiIntegrationForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    clearNotices();
+    const formData = new FormData(elements.apiIntegrationForm);
+    const accessToken = String(formData.get('access_token') || '').trim();
+    const allowedMethods = formData.getAll('allowed_methods').map(String);
+    if (allowedMethods.length === 0) {
+        showNotice(elements.error, 'অন্তত একটি HTTP method নির্বাচন করুন।');
+        return;
+    }
+
+    try {
+        await apiRequest('/api-integrations', {
+            method: 'POST',
+            body: JSON.stringify({
+                name: String(formData.get('name') || '').trim(),
+                endpoint: String(formData.get('endpoint') || '').trim(),
+                allowed_methods: allowedMethods,
+                ...(accessToken ? { access_token: accessToken } : {}),
+            }),
+        });
+        elements.apiIntegrationForm.reset();
+        await loadApiIntegrations();
+        showNotice(elements.success, 'REST connection যোগ হয়েছে; এখনো disabled আছে।');
+    } catch (error) {
+        showNotice(elements.error, error.message);
+    }
+});
+
+elements.apiIntegrationList.addEventListener('click', async (event) => {
+    const toggleButton = event.target.closest('[data-api-integration-toggle]');
+    const deleteButton = event.target.closest('[data-api-integration-delete]');
+    if (!toggleButton && !deleteButton) {
+        return;
+    }
+    const integrationId = toggleButton?.dataset.apiIntegrationToggle || deleteButton.dataset.apiIntegrationDelete;
+
+    try {
+        if (toggleButton) {
+            await apiRequest(`/api-integrations/${integrationId}/enabled`, {
+                method: 'PUT',
+                body: JSON.stringify({ enabled: toggleButton.dataset.enabled === 'true' }),
+            });
+        } else {
+            if (!window.confirm('এই REST connection, token এবং settings মুছবেন?')) {
+                return;
+            }
+            await apiRequest(`/api-integrations/${integrationId}`, { method: 'DELETE' });
+        }
+        await loadApiIntegrations();
+        showNotice(elements.success, 'REST connection settings আপডেট হয়েছে।');
+    } catch (error) {
+        showNotice(elements.error, error.message);
+    }
+});
+
 elements.brainSettingsForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     clearNotices();
@@ -1772,43 +2310,6 @@ elements.brainSettingsForm.addEventListener('submit', async (event) => {
             body: JSON.stringify(settingsData),
         });
 
-        elements.webAccessForm.addEventListener('submit', async (event) => {
-            event.preventDefault();
-            clearNotices();
-
-            try {
-                const provider = elements.webSearchProvider.value || null;
-                const apiKey = elements.webSearchApiKey.value.trim();
-                await apiRequest('/web-access', {
-                    method: 'PUT',
-                    body: JSON.stringify({
-                        search_provider: provider,
-                        ...(apiKey ? { search_api_key: apiKey } : {}),
-                        allowed_domains: parseDomainList(elements.webAllowedDomains.value),
-                        denied_domains: parseDomainList(elements.webDeniedDomains.value),
-                    }),
-                });
-                elements.webSearchApiKey.value = '';
-                await loadWebAccessSettings();
-                showNotice(elements.success, 'Web access settings সেভ হয়েছে।');
-            } catch (error) {
-                showNotice(elements.error, error.message);
-            }
-        });
-
-        elements.deleteWebSearchKey.addEventListener('click', async () => {
-            if (!window.confirm('সেভ করা search API key মুছে Live web search বন্ধ করবেন?')) {
-                return;
-            }
-
-            try {
-                await apiRequest('/web-access/search-key', { method: 'DELETE' });
-                await loadWebAccessSettings();
-                showNotice(elements.success, 'Search API key মুছে দেওয়া হয়েছে।');
-            } catch (error) {
-                showNotice(elements.error, error.message);
-            }
-        });
         brainSettings = responseData.settings;
         renderBrainSelectors();
         renderAgentDirectory();
@@ -1960,12 +2461,29 @@ elements.authForm.addEventListener('submit', async (event) => {
 
 async function clearSession() {
     apiToken = '';
+    taskEcho?.disconnect();
+    taskEcho = null;
     canManageKnowledgeSettings = false;
     canManageSecurity = false;
+    canManagePlatform = false;
+    elements.platformAdminNav.hidden = true;
+    elements.platformAdminMore.hidden = true;
+    adminEvaluationData = null;
+    window.clearTimeout(adminEvaluationRefreshTimer);
+    adminEvaluationRefreshTimer = null;
+    adminEvaluationRefreshAttempts = 0;
+    elements.adminView.classList.remove('is-visible');
+    elements.adminSummary.innerHTML = '';
+    elements.adminAlertList.innerHTML = '';
+    elements.adminAgentList.innerHTML = '';
+    elements.adminUserList.innerHTML = '';
+    elements.adminEvaluationResults.innerHTML = '';
     systemKillSwitchEnabled = false;
     selectedTaskId = null;
+    liveResponseDraft = null;
     sessionStorage.removeItem(TOKEN_STORAGE_KEY);
     window.clearTimeout(refreshTimer);
+    window.clearTimeout(realtimeRefreshTimer);
     setConnected(false);
     renderTaskList([]);
     elements.knowledgeAdminSettings.hidden = true;
@@ -1978,8 +2496,10 @@ async function clearSession() {
     knowledgeDocuments = [];
     elements.knowledgeDocumentList.innerHTML = '<div class="empty-state">ফাইল দেখতে API token দিয়ে সংযুক্ত করুন।</div>';
     elements.memoryList.innerHTML = '<div class="empty-state">Memory দেখতে API token দিয়ে সংযুক্ত করুন।</div>';
+    elements.taskScheduleList.innerHTML = '<div class="empty-state">Schedule দেখতে API token দিয়ে সংযুক্ত করুন।</div>';
     setApprovalCount(0);
     clearNotices();
+    switchView('tasks');
 }
 
 elements.disconnectButton.addEventListener('click', async () => {
@@ -1991,6 +2511,65 @@ elements.disconnectButton.addEventListener('click', async () => {
         showNotice(elements.error, error.message);
     } finally {
         elements.disconnectButton.disabled = false;
+    }
+});
+
+elements.scheduleTimezone.value = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+elements.scheduleCadence.addEventListener('change', () => {
+    const recurring = elements.scheduleCadence.value !== 'once';
+    elements.scheduleExpiryField.hidden = !recurring;
+    elements.scheduleExpiresAt.required = recurring;
+});
+
+elements.taskScheduleForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    clearNotices();
+    const submitButton = elements.taskScheduleForm.querySelector('button[type="submit"]');
+    const formData = new FormData(elements.taskScheduleForm);
+    const cadence = String(formData.get('cadence') || 'once');
+    submitButton.disabled = true;
+
+    try {
+        await apiRequest('/task-schedules', {
+            method: 'POST',
+            body: JSON.stringify({
+                title: String(formData.get('title') || '').trim(),
+                prompt: String(formData.get('prompt') || '').trim(),
+                cadence,
+                starts_at: formData.get('starts_at'),
+                timezone: formData.get('timezone'),
+                expires_at: cadence === 'once' ? null : formData.get('expires_at'),
+            }),
+        });
+        elements.taskScheduleForm.reset();
+        elements.scheduleTimezone.value = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+        elements.scheduleExpiryField.hidden = true;
+        elements.scheduleExpiresAt.required = false;
+        await loadTaskSchedules();
+        showNotice(elements.success, 'Schedule সংরক্ষণ হয়েছে। প্রতিটি run Sandbox-এ শুরু হবে।');
+    } catch (error) {
+        showNotice(elements.error, error.message);
+    } finally {
+        submitButton.disabled = false;
+    }
+});
+
+elements.taskScheduleList.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-cancel-task-schedule]');
+    if (!button) {
+        return;
+    }
+
+    button.disabled = true;
+    try {
+        await apiRequest(`/task-schedules/${encodeURIComponent(button.dataset.cancelTaskSchedule)}`, {
+            method: 'DELETE',
+        });
+        await loadTaskSchedules();
+        showNotice(elements.success, 'Schedule বাতিল হয়েছে।');
+    } catch (error) {
+        showNotice(elements.error, error.message);
+        button.disabled = false;
     }
 });
 
@@ -2583,6 +3162,82 @@ document.querySelector('#enable-push-channel').addEventListener('change', async 
     } catch (error) {
         event.target.checked = false;
         showNotice(elements.error, error.message);
+    }
+});
+
+elements.adminRefresh.addEventListener('click', async () => {
+    try {
+        adminEvaluationRefreshAttempts = 0;
+        await loadPlatformAdmin();
+    } catch (error) {
+        showNotice(elements.error, error.message);
+    }
+});
+
+elements.adminCaseAgent.addEventListener('change', renderEvaluationVersions);
+elements.adminEvaluationCase.addEventListener('change', renderEvaluationVersions);
+
+elements.adminEvaluationCaseForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const formData = new FormData(elements.adminEvaluationCaseForm);
+    const criteria = String(formData.get('criteria') || '')
+        .split(/\r?\n/)
+        .map((criterion) => criterion.trim())
+        .filter(Boolean);
+    const submitButton = elements.adminEvaluationCaseForm.querySelector('button[type="submit"]');
+    submitButton.disabled = true;
+
+    try {
+        const responseData = await apiRequest('/admin/platform/evaluations/cases', {
+            method: 'POST',
+            body: JSON.stringify({
+                name: String(formData.get('name') || '').trim(),
+                agent_name: String(formData.get('agent_name') || ''),
+                prompt: String(formData.get('prompt') || '').trim(),
+                reference_answer: String(formData.get('reference_answer') || '').trim() || null,
+                criteria,
+            }),
+        });
+        elements.adminEvaluationCaseForm.reset();
+        await loadPlatformAdmin();
+        elements.adminEvaluationCase.value = String(responseData.case.id);
+        renderEvaluationVersions();
+        showNotice(elements.success, 'Evaluation case সংরক্ষণ হয়েছে।');
+    } catch (error) {
+        showNotice(elements.error, error.message);
+    } finally {
+        submitButton.disabled = false;
+    }
+});
+
+elements.adminEvaluationRunForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const selectedModels = [...elements.adminEvaluationModels.selectedOptions]
+        .filter((option) => option.value !== '')
+        .map((option) => JSON.parse(option.value));
+    const specVersions = [...elements.adminEvaluationVersions.selectedOptions]
+        .map((option) => Number(option.value));
+    const submitButton = elements.adminEvaluationRunForm.querySelector('button[type="submit"]');
+    submitButton.disabled = true;
+
+    try {
+        const caseIds = [...elements.adminEvaluationCase.selectedOptions]
+            .filter((option) => option.value !== '')
+            .map((option) => Number(option.value));
+        await apiRequest('/admin/platform/evaluations/run', {
+            method: 'POST',
+            body: JSON.stringify({
+                case_ids: caseIds,
+                models: selectedModels,
+                spec_versions: specVersions,
+            }),
+        });
+        await loadPlatformAdmin();
+        showNotice(elements.success, 'Evaluation শুরু হয়েছে; queue worker ফলাফল তৈরি করলে comparison আপডেট হবে।');
+    } catch (error) {
+        showNotice(elements.error, error.message);
+    } finally {
+        submitButton.disabled = false;
     }
 });
 

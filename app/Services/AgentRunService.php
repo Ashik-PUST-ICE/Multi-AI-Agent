@@ -210,10 +210,13 @@ class AgentRunService
             if ($agentRun === null || $agentRun->status === AGENT_RUN_STATUS_COMPLETED) {
                 return;
             }
+            $safeError = (string) ($this->activityLogger->redactValue([
+                'error' => $exception->getMessage(),
+            ])['error'] ?? '');
 
             $agentRun->update([
                 'status' => AGENT_RUN_STATUS_FAILED,
-                'error_message' => $exception->getMessage(),
+                'error_message' => $safeError,
                 'completed_at' => now(),
             ]);
 
@@ -222,7 +225,7 @@ class AgentRunService
             if ($task !== null) {
                 $task->update([
                     'status' => TASK_STATUS_FAILED,
-                    'error_message' => $exception->getMessage(),
+                    'error_message' => $safeError,
                     'completed_at' => now(),
                 ]);
                 $agentRun->runEvents()->create([

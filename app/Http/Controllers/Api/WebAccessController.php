@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\UserWebAccessSetting;
+use App\Services\AuditLogService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -11,6 +12,8 @@ use Illuminate\Validation\ValidationException;
 
 class WebAccessController extends Controller
 {
+    public function __construct(private readonly AuditLogService $auditLogService) {}
+
     public function show(Request $request): JsonResponse
     {
         $settings = $request->user()->webAccessSettings;
@@ -44,6 +47,12 @@ class WebAccessController extends Controller
         if (! $settings->exists) {
             $settings->tenant_id = $request->user()->tenant_id;
         }
+        $previousSettings = [
+            'search_provider' => $settings->search_provider,
+            'allowed_domains' => $settings->allowed_domains ?? [],
+            'denied_domains' => $settings->denied_domains ?? [],
+            'has_search_api_key' => filled($settings->search_api_key),
+        ];
 
         if (array_key_exists('search_provider', $data)) {
             $settings->search_provider = $data['search_provider'];
@@ -67,6 +76,19 @@ class WebAccessController extends Controller
         }
 
         $settings->save();
+        $updatedSettings = [
+            'search_provider' => $settings->search_provider,
+            'allowed_domains' => $settings->allowed_domains ?? [],
+            'denied_domains' => $settings->denied_domains ?? [],
+            'has_search_api_key' => filled($settings->search_api_key),
+        ];
+        if ($previousSettings !== $updatedSettings) {
+            $user = $request->user();
+            $this->auditLogService->record($user, 'web.access.settings.changed', $settings, [
+                'previous' => $previousSettings,
+                'current' => $updatedSettings,
+            ], $user);
+        }
 
         return response()->json([
             'web_access' => [
@@ -82,10 +104,15 @@ class WebAccessController extends Controller
     {
         $settings = UserWebAccessSetting::query()->where('user_id', $request->user()->id)->first();
         if ($settings !== null) {
+            $provider = $settings->search_provider;
             $settings->update([
                 'search_provider' => null,
                 'search_api_key' => null,
             ]);
+            $user = $request->user();
+            $this->auditLogService->record($user, 'web.access.credential.deleted', $settings, [
+                'search_provider' => $provider,
+            ], $user);
         }
 
         return response()->json(['search_provider' => null, 'has_search_api_key' => false]);

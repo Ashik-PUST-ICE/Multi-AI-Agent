@@ -7,6 +7,8 @@ use Illuminate\Support\Facades\DB;
 
 class AgentActivityLogger
 {
+    public function __construct(private readonly PiiMasker $piiMasker) {}
+
     /**
      * @param  array<string, mixed>  $metadata
      */
@@ -79,7 +81,9 @@ class AgentActivityLogger
             '/\b(api[_-]?key|access[_-]?token|password)\s*[:=]\s*["\']?[^,\s"\']+/i',
         ];
 
-        return preg_replace($patterns, '[REDACTED]', $content) ?? $content;
+        $withoutCredentials = preg_replace($patterns, '[REDACTED]', $content) ?? $content;
+
+        return $this->piiMasker->maskText($withoutCredentials);
     }
 
     /**

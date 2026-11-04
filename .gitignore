@@ -12,6 +12,7 @@ Thumbs.db
 .env
 .env.backup
 .env.production
+/docker/secrets/
 /auth.json
 
 # PHP / Laravel
@@ -38,24 +39,13 @@ Homestead.yaml
 /node_modules
 package-lock.json
 
-# Ignore local tests except security regression coverage maintained in the repository.
+# Tests (not needed in production / repo)
 /tests
-!/tests/
-/tests/**
-!/tests/Feature/
-!/tests/Feature/AgentFrameworkTest.php
-!/tests/Feature/AgentPackApiTest.php
-!/tests/Feature/FlightRecorderApiTest.php
-!/tests/Feature/OutboundActionThrottleTest.php
-!/tests/Feature/OutboundMessageToolTest.php
-!/tests/Feature/DeferredToolActionTest.php
-!/tests/Feature/NotificationChannelsTest.php
-!/tests/Feature/NotificationMaintenanceTest.php
-!/tests/Feature/NotificationResponseTest.php
-!/tests/Feature/WebAccessTest.php
-!/tests/Feature/SecurityControlApiTest.php
-!/tests/Feature/UserLlmProviderResolverTest.php
+
 composer.lock
+!/composer.lock
+!/package-lock.json
+/backups/
 # Laravel public assets
 /public/build
 /public/hot

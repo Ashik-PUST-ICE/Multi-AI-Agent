@@ -89,6 +89,11 @@ class User extends Authenticatable
         return $this->hasMany(Task::class);
     }
 
+    public function taskSchedules(): HasMany
+    {
+        return $this->hasMany(TaskSchedule::class);
+    }
+
     public function tenant(): BelongsTo
     {
         return $this->belongsTo(Tenant::class);
@@ -142,6 +147,11 @@ class User extends Authenticatable
     public function notifications(): HasMany
     {
         return $this->hasMany(UserNotification::class);
+    }
+
+    public function auditLogs(): HasMany
+    {
+        return $this->hasMany(AuditLog::class);
     }
 
     public function notificationChannels(): HasMany

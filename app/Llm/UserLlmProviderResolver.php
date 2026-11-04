@@ -70,6 +70,44 @@ class UserLlmProviderResolver
     }
 
     /**
+     * Resolve one exact model only when the user has approved it and configured credentials.
+     *
+     * @param  array{provider: string, model: string}  $selection
+     * @return array{provider: LlmProvider, model: string}
+     */
+    public function resolveApprovedModel(User $user, array $selection): array
+    {
+        $providerId = $selection['provider'];
+        $modelId = $selection['model'];
+        $approvedModels = $user->llmSettings?->approved_models ?? [];
+        $isApproved = collect($approvedModels)->contains(
+            static fn (array $approved): bool => ($approved['provider'] ?? null) === $providerId
+                && ($approved['model'] ?? null) === $modelId,
+        );
+
+        if (! $isApproved) {
+            throw new InvalidArgumentException('Evaluation models must already be approved in Settings.');
+        }
+
+        if (! $this->hasConfiguredCredentials($user, $providerId)) {
+            throw new InvalidArgumentException('Save credentials for each approved evaluation model before running an evaluation.');
+        }
+
+        $credentials = $user->apiKeys()->where('provider', $providerId)->firstOrFail();
+
+        return [
+            'provider' => $this->providerFactory->create(
+                $providerId,
+                $modelId,
+                $credentials->api_key,
+                $credentials->base_url,
+                $user,
+            ),
+            'model' => $modelId,
+        ];
+    }
+
+    /**
      * Resolve only the approved model selection without constructing a provider.
      *
      * @return array{provider: string, model: string, brain_mode: string, policy: string, complexity: string, settings_fingerprint: string, reason: string, fallback_candidates: list<array{provider: string, model: string}>}

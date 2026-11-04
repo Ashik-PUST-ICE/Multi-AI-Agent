@@ -114,6 +114,7 @@ class OrchestratorService
             $task = $user->tasks()->create([
                 'title' => $data['title'],
                 'description' => $data['prompt'],
+                'scheduled_task_run_id' => $data['scheduled_task_run_id'] ?? null,
                 'input' => [
                     'prompt' => $data['prompt'],
                     'routing' => $routing,

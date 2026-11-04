@@ -55,7 +55,7 @@ return [
                     'text' => ['type' => 'string', 'minLength' => 1],
                 ],
             ],
-            'allowed_tools' => ['web_search', 'web_read'],
+            'allowed_tools' => ['web_search', 'web_read', 'mcp_call', 'rest_request'],
             'minimum_trust_level' => 1,
             'default_model' => null,
             'fallback_model' => null,

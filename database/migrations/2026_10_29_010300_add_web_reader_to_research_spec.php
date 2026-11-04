@@ -23,7 +23,7 @@ return new class extends Migration
             if ($active === null) {
                 return;
             }
-            if ((int) $active->version !== 1 || $active->created_by !== null) {
+            if ($active->created_by !== null) {
                 return;
             }
 

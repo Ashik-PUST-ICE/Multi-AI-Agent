@@ -21,6 +21,7 @@ class ProviderSettingsService
         private readonly ProviderCatalog $catalog,
         private readonly ProviderFactory $providerFactory,
         private readonly CustomBaseUrlPolicy $baseUrlPolicy,
+        private readonly AuditLogService $auditLogService,
     ) {}
 
     public function getCatalog(): JsonResponse
@@ -73,6 +74,11 @@ class ProviderSettingsService
         try {
             $approvedModels = $this->normalizeApprovedModels($data['approved_models']);
             $existingSettings = $user->llmSettings()->first();
+            $previousApprovedModels = $existingSettings?->approved_models ?? [];
+            $previousSelection = [
+                'provider' => $existingSettings?->provider,
+                'model' => $existingSettings?->model,
+            ];
             $providerId = $data['provider'];
             $modelId = $data['model'];
             $this->assertApprovedModel($approvedModels, $providerId, $modelId);
@@ -131,6 +137,18 @@ class ProviderSettingsService
                 'max_task_cost' => $maxTaskCost,
                 'budget_currency' => $budgetCurrency,
             ]);
+            if ($previousApprovedModels !== $approvedModels) {
+                $this->auditLogService->record($user, 'llm.models.approved', $settings, [
+                    'previous_models' => $previousApprovedModels,
+                    'approved_models' => $approvedModels,
+                ], $user);
+            }
+            if ($previousSelection !== ['provider' => $providerId, 'model' => $modelId]) {
+                $this->auditLogService->record($user, 'llm.model.selected', $settings, [
+                    'previous_selection' => $previousSelection,
+                    'selection' => ['provider' => $providerId, 'model' => $modelId],
+                ], $user);
+            }
         } catch (InvalidArgumentException $exception) {
             return $this->error($exception->getMessage());
         }
@@ -191,6 +209,11 @@ class ProviderSettingsService
                     'base_url' => $normalizedBaseUrl,
                 ],
             );
+            $this->auditLogService->record($user, 'llm.credential.saved', $apiKeyRecord, [
+                'provider' => $providerId,
+                'has_api_key' => $normalizedApiKey !== null,
+                'has_custom_base_url' => $normalizedBaseUrl !== null,
+            ], $user);
         } catch (InvalidArgumentException $exception) {
             return $this->error($exception->getMessage());
         }
@@ -209,7 +232,12 @@ class ProviderSettingsService
     {
         try {
             $this->catalog->provider($providerId);
-            $user->apiKeys()->where('provider', $providerId)->delete();
+            $deleted = $user->apiKeys()->where('provider', $providerId)->delete();
+            if ($deleted > 0) {
+                $this->auditLogService->record($user, 'llm.credential.deleted', null, [
+                    'provider' => $providerId,
+                ], $user);
+            }
         } catch (InvalidArgumentException $exception) {
             return $this->error($exception->getMessage());
         }

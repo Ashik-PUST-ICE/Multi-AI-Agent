@@ -1,0 +1,268 @@
+name: multi-ai-agent
+
+services:
+  app:
+    image: ${DOCKER_APP_IMAGE:-multi-ai-agent:local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: app
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+      - /var/www/html/bootstrap/cache:size=16m,uid=33,gid=33,mode=0750
+      - /var/www/html/storage/framework/cache/data:size=64m,uid=33,gid=33,mode=0750
+      - /var/www/html/storage/framework/sessions:size=32m,uid=33,gid=33,mode=0750
+      - /var/www/html/storage/framework/views:size=32m,uid=33,gid=33,mode=0750
+      - /var/www/html/storage/logs:size=32m,uid=33,gid=33,mode=0750
+    volumes:
+      - app_storage:/var/www/html/storage/app
+    secrets:
+      - app_key
+      - db_password
+    environment: &app_environment
+      APP_NAME: ${APP_NAME:-Multi-AI-Agent}
+      APP_ENV: production
+      APP_DEBUG: "false"
+      APP_URL: ${DOCKER_APP_URL:-${APP_URL:-http://localhost:8080}}
+      APP_KEY_FILE: /run/secrets/app_key
+      LOG_CHANNEL: stderr
+      LOG_LEVEL: info
+      DB_CONNECTION: mariadb
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_DATABASE: ${DOCKER_DB_DATABASE:-multi_ai_agent}
+      DB_USERNAME: ${DOCKER_DB_USERNAME:-multi_ai_agent}
+      DB_PASSWORD_FILE: /run/secrets/db_password
+      CACHE_STORE: redis
+      SESSION_DRIVER: redis
+      QUEUE_CONNECTION: redis
+      REDIS_CLIENT: phpredis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: null
+      FILESYSTEM_DISK: local
+      BROADCAST_CONNECTION: log
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "php", "-r", "$$socket = @fsockopen('127.0.0.1', 9000); exit($$socket ? 0 : 1);"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - backend
+
+  web:
+    image: ${DOCKER_WEB_IMAGE:-multi-ai-agent-web:local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: web
+    restart: unless-stopped
+    read_only: true
+    user: "101:101"
+    ports:
+      - "${DOCKER_WEB_BIND:-127.0.0.1}:${DOCKER_WEB_PORT:-8080}:8080"
+    tmpfs:
+      - /tmp:size=16m,uid=101,gid=101,mode=0750
+      - /var/cache/nginx:size=32m,uid=101,gid=101,mode=0750
+      - /var/run:size=8m,uid=101,gid=101,mode=0750
+    depends_on:
+      app:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/up || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - edge
+      - backend
+
+  worker:
+    image: ${DOCKER_APP_IMAGE:-multi-ai-agent:local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: app
+    command: ["php", "artisan", "queue:work", "--sleep=3", "--tries=3", "--timeout=90"]
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+      - /var/www/html/bootstrap/cache:size=16m,uid=33,gid=33,mode=0750
+      - /var/www/html/storage/framework/cache/data:size=64m,uid=33,gid=33,mode=0750
+      - /var/www/html/storage/framework/sessions:size=32m,uid=33,gid=33,mode=0750
+      - /var/www/html/storage/framework/views:size=32m,uid=33,gid=33,mode=0750
+      - /var/www/html/storage/logs:size=32m,uid=33,gid=33,mode=0750
+    volumes:
+      - app_storage:/var/www/html/storage/app
+    secrets:
+      - app_key
+      - db_password
+    environment: *app_environment
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - backend
+
+  scheduler:
+    image: ${DOCKER_APP_IMAGE:-multi-ai-agent:local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: app
+    command: ["php", "artisan", "schedule:work"]
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+      - /var/www/html/bootstrap/cache:size=16m,uid=33,gid=33,mode=0750
+      - /var/www/html/storage/framework/cache/data:size=64m,uid=33,gid=33,mode=0750
+      - /var/www/html/storage/framework/sessions:size=32m,uid=33,gid=33,mode=0750
+      - /var/www/html/storage/framework/views:size=32m,uid=33,gid=33,mode=0750
+      - /var/www/html/storage/logs:size=32m,uid=33,gid=33,mode=0750
+    volumes:
+      - app_storage:/var/www/html/storage/app
+    secrets:
+      - app_key
+      - db_password
+    environment: *app_environment
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - backend
+
+  migrate:
+    image: ${DOCKER_APP_IMAGE:-multi-ai-agent:local}
+    profiles: ["maintenance"]
+    command: ["php", "artisan", "migrate", "--force"]
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+      - /var/www/html/bootstrap/cache:size=16m,uid=33,gid=33,mode=0750
+      - /var/www/html/storage/framework/cache/data:size=64m,uid=33,gid=33,mode=0750
+      - /var/www/html/storage/framework/sessions:size=32m,uid=33,gid=33,mode=0750
+      - /var/www/html/storage/framework/views:size=32m,uid=33,gid=33,mode=0750
+      - /var/www/html/storage/logs:size=32m,uid=33,gid=33,mode=0750
+    volumes:
+      - app_storage:/var/www/html/storage/app
+    secrets:
+      - app_key
+      - db_password
+    environment: *app_environment
+    depends_on:
+      db:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - backend
+
+  db:
+    image: mariadb:11.4
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: ${DOCKER_DB_DATABASE:-multi_ai_agent}
+      MARIADB_USER: ${DOCKER_DB_USERNAME:-multi_ai_agent}
+      MARIADB_PASSWORD_FILE: /run/secrets/db_password
+      MARIADB_ROOT_PASSWORD_FILE: /run/secrets/db_root_password
+      MARIADB_AUTO_UPGRADE: "1"
+    secrets:
+      - db_password
+      - db_root_password
+    volumes:
+      - database_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction"]
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend
+
+  sandbox:
+    image: ${SANDBOX_IMAGE:-php:8.3-cli-alpine}
+    profiles: ["sandbox"]
+    command: ["sh", "-c", "while true; do sleep 3600; done"]
+    network_mode: none
+    read_only: true
+    user: "65532:65532"
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid,nodev,mode=1777
+    pids_limit: 64
+    mem_limit: 256m
+    cpus: 1.0
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: "no"
+
+secrets:
+  app_key:
+    file: ${DOCKER_APP_KEY_SECRET_FILE:-./docker/secrets/app_key}
+  db_password:
+    file: ${DOCKER_DB_PASSWORD_SECRET_FILE:-./docker/secrets/db_password}
+  db_root_password:
+    file: ${DOCKER_DB_ROOT_PASSWORD_SECRET_FILE:-./docker/secrets/db_root_password}
+
+volumes:
+  app_storage:
+  database_data:
+  redis_data:
+
+networks:
+  edge:
+  backend:
+    internal: true

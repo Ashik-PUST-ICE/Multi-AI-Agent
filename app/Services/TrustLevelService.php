@@ -29,6 +29,7 @@ class TrustLevelService
 
     public function __construct(
         private readonly AgentActivityLogger $activityLogger,
+        private readonly AuditLogService $auditLogService,
     ) {}
 
     public function overview(User $user): JsonResponse
@@ -97,6 +98,7 @@ class TrustLevelService
         $this->ensureAgentIsRegistered($agentName);
         $trustLevel = $this->validateLevel($trustLevel);
         $reason = trim($reason);
+        $reason = (string) ($this->activityLogger->redactValue(['reason' => $reason])['reason'] ?? '');
 
         $trust = DB::transaction(function () use ($user, $agentName, $trustLevel, $reason): AgentTrust {
             User::query()->whereKey($user->id)->lockForUpdate()->firstOrFail();
@@ -118,6 +120,11 @@ class TrustLevelService
                     'reason' => $reason,
                     'changed_by' => $user->id,
                 ]);
+                $this->auditLogService->record($user, 'agent.trust.changed', $agentTrust, [
+                    'agent_name' => $agentName,
+                    'from_level' => $previousLevel,
+                    'to_level' => $trustLevel,
+                ], $user);
             }
 
             return $agentTrust->refresh();
@@ -162,14 +169,23 @@ class TrustLevelService
                 $agentTrust->update(['trust_level' => $newLevel]);
             }
 
+            $safeReason = (string) ($this->activityLogger->redactValue(['reason' => $reason])['reason'] ?? '');
             AgentTrustHistory::query()->create([
                 'user_id' => $user->id,
                 'agent_name' => $agentName,
                 'from_level' => $previousLevel,
                 'to_level' => $newLevel,
                 'change_type' => $changeType,
-                'reason' => $reason,
+                'reason' => $safeReason,
             ]);
+            if ($newLevel !== $previousLevel) {
+                $this->auditLogService->record($user, 'agent.trust.automatically_changed', $agentTrust, [
+                    'agent_name' => $agentName,
+                    'tool_name' => $toolName,
+                    'from_level' => $previousLevel,
+                    'to_level' => $newLevel,
+                ]);
+            }
 
             $this->activityLogger->recordEvent($agentRun, 'agent.trust_violation', [
                 'agent_name' => $agentName,

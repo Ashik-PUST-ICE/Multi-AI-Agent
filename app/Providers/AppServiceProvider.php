@@ -7,7 +7,13 @@ use App\Models\Task;
 use App\Policies\PendingApprovalPolicy;
 use App\Policies\TaskPolicy;
 use App\Tenancy\TenantContext;
+use App\Tools\BrowserDownloadTool;
+use App\Tools\BrowserReadTool;
+use App\Tools\BrowserSubmitTool;
+use App\Tools\CodeExecuteTool;
+use App\Tools\McpCallTool;
 use App\Tools\OutboundMessageTool;
+use App\Tools\RestRequestTool;
 use App\Tools\ToolRegistry;
 use App\Tools\WebPageReadTool;
 use App\Tools\WebSearchTool;
@@ -27,7 +33,13 @@ class AppServiceProvider extends ServiceProvider
             $toolRegistry = new ToolRegistry;
             $toolRegistry->register(new WebSearchTool);
             $toolRegistry->register(new WebPageReadTool);
+            $toolRegistry->register(new BrowserReadTool);
+            $toolRegistry->register(new BrowserSubmitTool);
+            $toolRegistry->register(new BrowserDownloadTool);
+            $toolRegistry->register(new CodeExecuteTool);
             $toolRegistry->register(new OutboundMessageTool);
+            $toolRegistry->register(new McpCallTool);
+            $toolRegistry->register(new RestRequestTool);
 
             return $toolRegistry;
         });
