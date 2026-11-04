@@ -639,6 +639,17 @@ class OrchestratorService
                     $assessment['criteria_passed'] ? 'evaluation.passed' : 'evaluation.failed',
                     ['checklist' => $assessment['checklist']],
                 );
+                if (! $assessment['approved']) {
+                    $this->recordTaskEvent(
+                        $agentRun,
+                        $task,
+                        'task.goal_drift_detected',
+                        [
+                            'reason' => 'The independent review found unmet or uncertain success criteria.',
+                            'criteria_passed' => $assessment['criteria_passed'],
+                        ],
+                    );
+                }
 
                 $retryCount = (int) ($taskInput['criteria_retry_count'] ?? 0);
                 if (! $assessment['approved'] && $retryCount < 1) {

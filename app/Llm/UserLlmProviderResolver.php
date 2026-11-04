@@ -27,18 +27,22 @@ class UserLlmProviderResolver
         $providerId = $modelSelection['provider'];
         $modelId = $modelSelection['model'];
 
-        if (! $this->hasConfiguredCredentials($user, $providerId)) {
-            throw new InvalidArgumentException('Save credentials for the selected provider before running an agent.');
+        if (! $this->hasConfiguredCredentials($user, $providerId, $agentName)) {
+            throw new InvalidArgumentException("Save {$agentName}'s credentials for the selected provider before running the agent.");
         }
 
-        $providerCredentials = $user->apiKeys()->where('provider', $providerId)->firstOrFail();
+        $providerCredentials = $user->apiKeys()
+            ->where('agent_name', $agentName)
+            ->where('provider', $providerId)
+            ->firstOrFail();
         $fallbackProviders = [];
         foreach ($modelSelection['fallback_candidates'] as $fallbackSelection) {
-            if (! $this->hasConfiguredCredentials($user, $fallbackSelection['provider'])) {
+            if (! $this->hasConfiguredCredentials($user, $fallbackSelection['provider'], $agentName)) {
                 continue;
             }
 
             $fallbackCredentials = $user->apiKeys()
+                ->where('agent_name', $agentName)
                 ->where('provider', $fallbackSelection['provider'])
                 ->firstOrFail();
 
@@ -75,7 +79,7 @@ class UserLlmProviderResolver
      * @param  array{provider: string, model: string}  $selection
      * @return array{provider: LlmProvider, model: string}
      */
-    public function resolveApprovedModel(User $user, array $selection): array
+    public function resolveApprovedModel(User $user, array $selection, string $agentName): array
     {
         $providerId = $selection['provider'];
         $modelId = $selection['model'];
@@ -89,11 +93,14 @@ class UserLlmProviderResolver
             throw new InvalidArgumentException('Evaluation models must already be approved in Settings.');
         }
 
-        if (! $this->hasConfiguredCredentials($user, $providerId)) {
-            throw new InvalidArgumentException('Save credentials for each approved evaluation model before running an evaluation.');
+        if (! $this->hasConfiguredCredentials($user, $providerId, $agentName)) {
+            throw new InvalidArgumentException("Save {$agentName}'s credentials for each approved evaluation model before running an evaluation.");
         }
 
-        $credentials = $user->apiKeys()->where('provider', $providerId)->firstOrFail();
+        $credentials = $user->apiKeys()
+            ->where('agent_name', $agentName)
+            ->where('provider', $providerId)
+            ->firstOrFail();
 
         return [
             'provider' => $this->providerFactory->create(
@@ -181,10 +188,13 @@ class UserLlmProviderResolver
         return $selection;
     }
 
-    public function hasConfiguredCredentials(User $user, string $providerId): bool
+    public function hasConfiguredCredentials(User $user, string $providerId, string $agentName): bool
     {
         $provider = $this->catalog->provider($providerId);
-        $credentials = $user->apiKeys()->where('provider', $providerId)->first();
+        $credentials = $user->apiKeys()
+            ->where('agent_name', $agentName)
+            ->where('provider', $providerId)
+            ->first();
 
         if ($credentials === null) {
             return false;

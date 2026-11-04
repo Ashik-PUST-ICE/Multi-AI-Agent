@@ -616,15 +616,10 @@ abstract class BaseAgent
             if ($agentRun !== null) {
                 app(ExecutionKillSwitchService::class)->assertCanContinue($agentRun);
             }
-            app(OutboundActionThrottle::class)->assertAllowed($agentRun, $toolName);
             $trustLevel = $user === null
                 ? AGENT_TRUST_LEVEL_NONE
                 : app(TrustLevelService::class)->currentLevel($user, $this->name());
             $toolStartedAt = hrtime(true);
-            $this->activityLogger?->recordEvent($agentRun, 'tool.started', [
-                'tool_name' => $toolName,
-                'input' => $arguments,
-            ]);
 
             try {
                 $policyApprovedSignatures = app(AccessPolicyEngine::class)->authorizeToolCall(
@@ -639,6 +634,15 @@ abstract class BaseAgent
                     $approvedCallSignatures,
                     $this->tools,
                 );
+                $outboundStartRecorded = app(OutboundActionThrottle::class)
+                    ->recordStartedIfAllowed($agentRun, $toolName, $arguments);
+                if (! $outboundStartRecorded) {
+                    $this->activityLogger?->recordEvent($agentRun, 'tool.started', [
+                        'tool_name' => $toolName,
+                        'minimum_trust_level' => $this->tools->get($toolName)->minimumTrustLevel(),
+                        'input' => $arguments,
+                    ]);
+                }
                 $toolResult = $this->tools->run(
                     $toolName,
                     $arguments,

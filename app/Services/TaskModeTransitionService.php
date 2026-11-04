@@ -251,7 +251,7 @@ class TaskModeTransitionService
                     false,
                     $prompt,
                 );
-                if (! $this->providerResolver->hasConfiguredCredentials($user, $modelSelection['provider'])) {
+                if (! $this->providerResolver->hasConfiguredCredentials($user, $modelSelection['provider'], $agentName)) {
                     $blockedRequirements[] = "credentials_missing_for_{$agentName}";
                 }
             } catch (InvalidArgumentException) {

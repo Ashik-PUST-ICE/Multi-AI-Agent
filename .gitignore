@@ -41,6 +41,16 @@ package-lock.json
 
 # Tests (not needed in production / repo)
 /tests
+!/tests/
+/tests/*
+!/tests/Feature/
+/tests/Feature/*
+!/tests/Feature/TaskRoutingAndBudgetTest.php
+!/tests/Feature/TaskOrchestrationApiTest.php
+!/tests/Feature/AgentPackApiTest.php
+!/tests/Feature/SecurityControlApiTest.php
+!/tests/Feature/ProviderSettingsApiTest.php
+!/tests/Feature/UserLlmProviderResolverTest.php
 
 composer.lock
 !/composer.lock

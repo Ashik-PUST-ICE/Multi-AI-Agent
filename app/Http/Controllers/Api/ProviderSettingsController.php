@@ -34,7 +34,7 @@ class ProviderSettingsController extends Controller
         return $this->providerSettingsService->saveSettings($user, $validatedData);
     }
 
-    public function saveKey(SaveProviderApiKeyRequest $request, string $provider): JsonResponse
+    public function saveKey(SaveProviderApiKeyRequest $request, string $agentName, string $provider): JsonResponse
     {
         $user = $request->user();
         $validatedData = $request->validated();
@@ -43,15 +43,21 @@ class ProviderSettingsController extends Controller
 
         return $this->providerSettingsService->saveApiKey(
             $user,
+            $agentName,
             $provider,
             $apiKeyValue,
             $baseUrl,
         );
     }
 
-    public function deleteKey(Request $request, string $provider): JsonResponse
+    public function deleteKey(Request $request, string $agentName, string $provider): JsonResponse
     {
-        return $this->providerSettingsService->deleteApiKey($request->user(), $provider);
+        return $this->providerSettingsService->deleteApiKey($request->user(), $agentName, $provider);
+    }
+
+    public function deleteLegacyKey(Request $request, string $provider): JsonResponse
+    {
+        return $this->providerSettingsService->deleteLegacyApiKey($request->user(), $provider);
     }
 
     public function testConnection(TestProviderConnectionRequest $request): JsonResponse
@@ -64,6 +70,7 @@ class ProviderSettingsController extends Controller
             $request->user(),
             $providerId,
             $modelId,
+            $validatedData['agent_name'] ?? 'Orchestrator',
         );
     }
 }

@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Jobs\DeliverUserNotificationJob;
+use App\Models\AgentRun;
 use App\Models\NotificationResponseToken;
 use App\Models\PendingApproval;
 use App\Models\Task;
@@ -58,6 +59,32 @@ class NotificationService
                 'title' => 'Auto access paused',
                 'message' => 'Access returned to User mode because a safe, active policy did not cover this tool call.',
                 'data' => ['task_id' => $task->id],
+                'status' => NOTIFICATION_STATUS_UNREAD,
+                'delivered_at' => now(),
+            ],
+        );
+        DeliverUserNotificationJob::dispatch($notification->id)->afterCommit();
+
+        return $notification;
+    }
+
+    public function outboundActionsHalted(User $user, Task $task, AgentRun $run, string $reason): UserNotification
+    {
+        $notification = UserNotification::query()->updateOrCreate(
+            ['dedupe_key' => "outbound-actions-halted:{$task->id}"],
+            [
+                'user_id' => $user->id,
+                'tenant_id' => $user->tenant_id,
+                'type' => 'security_alert',
+                'priority' => NOTIFICATION_PRIORITY_HIGH,
+                'title' => 'Outbound actions paused for review',
+                'message' => 'The task reached its outbound-action limit. Further actions were stopped and require your review.',
+                'data' => [
+                    'task_id' => $task->id,
+                    'agent_run_id' => $run->id,
+                    'agent_name' => $run->agent_name,
+                    'reason' => $reason,
+                ],
                 'status' => NOTIFICATION_STATUS_UNREAD,
                 'delivered_at' => now(),
             ],

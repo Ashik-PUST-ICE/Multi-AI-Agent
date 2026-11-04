@@ -130,6 +130,17 @@ class ExecutionKillSwitchService
                 'completed_at' => now(),
             ]);
             $this->recordEvent($task, $lockedRun, 'execution.agent_halted', $reason);
+            if (str_contains($reason, 'outbound-action limit')) {
+                $task->loadMissing('user');
+                if ($task->user !== null) {
+                    app(NotificationService::class)->outboundActionsHalted(
+                        $task->user,
+                        $task,
+                        $lockedRun,
+                        $reason,
+                    );
+                }
+            }
         });
     }
 

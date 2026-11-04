@@ -327,10 +327,15 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
         Route::get('/catalog', [ProviderSettingsController::class, 'catalog'])->name('catalog');
         Route::get('/settings', [ProviderSettingsController::class, 'index'])->name('settings.index');
         Route::put('/settings', [ProviderSettingsController::class, 'update'])->name('settings.update');
-        Route::put('/keys/{provider}', [ProviderSettingsController::class, 'saveKey'])
+        Route::delete('/keys/legacy/{provider}', [ProviderSettingsController::class, 'deleteLegacyKey'])
+            ->where('provider', '[a-zA-Z0-9_-]+')
+            ->name('keys.legacy.delete');
+        Route::put('/keys/{agentName}/{provider}', [ProviderSettingsController::class, 'saveKey'])
+            ->where('agentName', '[A-Za-z0-9_-]+')
             ->where('provider', '[a-zA-Z0-9_-]+')
             ->name('keys.save');
-        Route::delete('/keys/{provider}', [ProviderSettingsController::class, 'deleteKey'])
+        Route::delete('/keys/{agentName}/{provider}', [ProviderSettingsController::class, 'deleteKey'])
+            ->where('agentName', '[A-Za-z0-9_-]+')
             ->where('provider', '[a-zA-Z0-9_-]+')
             ->name('keys.delete');
         Route::post('/test-connection', [ProviderSettingsController::class, 'testConnection'])

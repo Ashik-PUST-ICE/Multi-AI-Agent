@@ -25,6 +25,7 @@ class AgentPackService
 
     public function __construct(
         private readonly AgentRegistry $agentRegistry,
+        private readonly AgentPackIntegrity $integrity,
     ) {}
 
     public function index(User $user): JsonResponse
@@ -145,6 +146,15 @@ class AgentPackService
             'description' => $data['description'],
             'definition' => $definition,
             'definition_sha256' => $this->definitionHash($definition),
+            'integrity_signature' => $this->signature(
+                $data['slug'],
+                1,
+                $data['name'],
+                $data['description'],
+                $definition,
+                false,
+                $user->id,
+            ),
             'status' => AGENT_PACK_STATUS_DRAFT,
             'is_builtin' => false,
             'created_by' => $user->id,
@@ -183,6 +193,15 @@ class AgentPackService
                 'description' => $attributes['description'],
                 'definition' => $definition,
                 'definition_sha256' => $this->definitionHash($definition),
+                'integrity_signature' => $this->signature(
+                    $slug,
+                    $latestPack->version + 1,
+                    $attributes['name'],
+                    $attributes['description'],
+                    $definition,
+                    false,
+                    $user->id,
+                ),
                 'status' => AGENT_PACK_STATUS_DRAFT,
                 'is_builtin' => false,
                 'created_by' => $user->id,
@@ -224,6 +243,15 @@ class AgentPackService
                 'description' => $attributes['description'],
                 'definition' => $definition,
                 'definition_sha256' => $this->definitionHash($definition),
+                'integrity_signature' => $this->signature(
+                    $pack->slug,
+                    $pack->version,
+                    $attributes['name'],
+                    $attributes['description'],
+                    $definition,
+                    false,
+                    $pack->created_by,
+                ),
             ]);
 
             return $pack->refresh();
@@ -290,6 +318,15 @@ class AgentPackService
                     'description' => $attributes['description'],
                     'definition' => $definition,
                     'definition_sha256' => $this->definitionHash($definition),
+                    'integrity_signature' => $this->signature(
+                        $slug,
+                        1,
+                        $attributes['name'],
+                        $attributes['description'],
+                        $definition,
+                        true,
+                        null,
+                    ),
                     'status' => AGENT_PACK_STATUS_ACTIVE,
                     'is_builtin' => true,
                 ],
@@ -359,6 +396,10 @@ class AgentPackService
             'description' => $pack->description,
             'status' => $pack->status,
             'is_builtin' => $pack->is_builtin,
+            'publisher' => $pack->is_builtin ? 'platform' : 'admin:'.$pack->created_by,
+            'publisher_id' => $pack->created_by,
+            'definition_sha256' => $pack->definition_sha256,
+            'integrity_status' => 'verified',
             'agents' => $pack->definition['agents'] ?? [],
             'profiles' => $pack->definition['profiles'] ?? [],
             'examples' => $pack->definition['examples'] ?? [],
@@ -376,8 +417,33 @@ class AgentPackService
     private function assertDefinitionIntegrity(AgentPack $pack): void
     {
         $expectedHash = $this->definitionHash($pack->definition ?? []);
-        if (! is_string($pack->definition_sha256) || ! hash_equals($pack->definition_sha256, $expectedHash)) {
+        if (! is_string($pack->definition_sha256)
+            || ! hash_equals($pack->definition_sha256, $expectedHash)
+            || ! $this->integrity->verifies($pack)) {
             throw new RuntimeException("Agent pack [{$pack->slug}] failed its definition integrity check.");
         }
+    }
+
+    /**
+     * @param  array<string, mixed>  $definition
+     */
+    private function signature(
+        string $slug,
+        int $version,
+        string $name,
+        string $description,
+        array $definition,
+        bool $isBuiltin,
+        ?int $createdBy,
+    ): string {
+        return $this->integrity->signatureFor(
+            $slug,
+            $version,
+            $name,
+            $description,
+            $definition,
+            $isBuiltin,
+            $createdBy,
+        );
     }
 }

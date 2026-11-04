@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Agents\AgentRegistry;
 use App\Llm\CustomBaseUrlPolicy;
 use App\Llm\ProviderCatalog;
 use App\Llm\ProviderFactory;
@@ -22,6 +23,7 @@ class ProviderSettingsService
         private readonly ProviderFactory $providerFactory,
         private readonly CustomBaseUrlPolicy $baseUrlPolicy,
         private readonly AuditLogService $auditLogService,
+        private readonly AgentRegistry $agentRegistry,
     ) {}
 
     public function getCatalog(): JsonResponse
@@ -36,13 +38,19 @@ class ProviderSettingsService
         $settings = $user->llmSettings;
         $apiKeys = $user->apiKeys()->get();
         $keyStatuses = [];
+        $legacyKeyStatuses = [];
 
         foreach ($apiKeys as $apiKey) {
-            $keyStatuses[$apiKey->provider] = [
+            $status = [
                 'configured' => $apiKey->api_key !== null || $apiKey->base_url !== null,
                 'masked' => $apiKey->maskedKey(),
                 'custom_base_url' => $apiKey->base_url,
             ];
+            if ($apiKey->agent_name === null) {
+                $legacyKeyStatuses[$apiKey->provider] = $status;
+            } else {
+                $keyStatuses[$apiKey->agent_name][$apiKey->provider] = $status;
+            }
         }
 
         $settingsData = [
@@ -60,6 +68,7 @@ class ProviderSettingsService
                 'routing_policy',
             ]),
             'keys' => $keyStatuses,
+            'legacy_keys' => $legacyKeyStatuses,
             'catalog' => $this->catalog->publicCatalog(),
         ];
 
@@ -173,9 +182,15 @@ class ProviderSettingsService
         );
     }
 
-    public function saveApiKey(User $user, string $providerId, ?string $apiKey, ?string $baseUrl): JsonResponse
-    {
+    public function saveApiKey(
+        User $user,
+        string $agentName,
+        string $providerId,
+        ?string $apiKey,
+        ?string $baseUrl,
+    ): JsonResponse {
         try {
+            $this->agentRegistry->activeSpec($agentName);
             $provider = $this->catalog->provider($providerId);
             $normalizedApiKey = $apiKey === null ? null : trim($apiKey);
 
@@ -203,13 +218,14 @@ class ProviderSettingsService
             }
 
             $apiKeyRecord = $user->apiKeys()->updateOrCreate(
-                ['provider' => $providerId],
+                ['agent_name' => $agentName, 'provider' => $providerId],
                 [
                     'api_key' => $normalizedApiKey,
                     'base_url' => $normalizedBaseUrl,
                 ],
             );
             $this->auditLogService->record($user, 'llm.credential.saved', $apiKeyRecord, [
+                'agent_name' => $agentName,
                 'provider' => $providerId,
                 'has_api_key' => $normalizedApiKey !== null,
                 'has_custom_base_url' => $normalizedBaseUrl !== null,
@@ -219,6 +235,7 @@ class ProviderSettingsService
         }
 
         $keyData = [
+            'agent_name' => $agentName,
             'provider' => $providerId,
             'configured' => $apiKeyRecord->api_key !== null || $apiKeyRecord->base_url !== null,
             'masked_key' => $apiKeyRecord->maskedKey(),
@@ -228,13 +245,38 @@ class ProviderSettingsService
         return $this->success($keyData, UPDATED_SUCCESSFULLY);
     }
 
-    public function deleteApiKey(User $user, string $providerId): JsonResponse
+    public function deleteApiKey(User $user, string $agentName, string $providerId): JsonResponse
+    {
+        try {
+            $this->agentRegistry->activeSpec($agentName);
+            $this->catalog->provider($providerId);
+            $deleted = $user->apiKeys()
+                ->where('agent_name', $agentName)
+                ->where('provider', $providerId)
+                ->delete();
+            if ($deleted > 0) {
+                $this->auditLogService->record($user, 'llm.credential.deleted', null, [
+                    'agent_name' => $agentName,
+                    'provider' => $providerId,
+                ], $user);
+            }
+        } catch (InvalidArgumentException $exception) {
+            return $this->error($exception->getMessage());
+        }
+
+        return $this->success(['agent_name' => $agentName, 'provider' => $providerId], DELETED_SUCCESSFULLY);
+    }
+
+    public function deleteLegacyApiKey(User $user, string $providerId): JsonResponse
     {
         try {
             $this->catalog->provider($providerId);
-            $deleted = $user->apiKeys()->where('provider', $providerId)->delete();
+            $deleted = $user->apiKeys()
+                ->whereNull('agent_name')
+                ->where('provider', $providerId)
+                ->delete();
             if ($deleted > 0) {
-                $this->auditLogService->record($user, 'llm.credential.deleted', null, [
+                $this->auditLogService->record($user, 'llm.credential.legacy_deleted', null, [
                     'provider' => $providerId,
                 ], $user);
             }
@@ -245,9 +287,14 @@ class ProviderSettingsService
         return $this->success(['provider' => $providerId], DELETED_SUCCESSFULLY);
     }
 
-    public function testConnection(User $user, ?string $providerId = null, ?string $modelId = null): JsonResponse
-    {
+    public function testConnection(
+        User $user,
+        ?string $providerId = null,
+        ?string $modelId = null,
+        string $agentName = 'Orchestrator',
+    ): JsonResponse {
         try {
+            $this->agentRegistry->activeSpec($agentName);
             $settings = $user->llmSettings;
 
             if ($settings === null) {
@@ -259,10 +306,13 @@ class ProviderSettingsService
             $approvedModels = $settings->approved_models ?? [];
             $this->assertApprovedModel($approvedModels, $providerId, $modelId);
             $this->catalog->model($providerId, $modelId);
-            $providerKey = $user->apiKeys()->where('provider', $providerId)->first();
+            $providerKey = $user->apiKeys()
+                ->where('agent_name', $agentName)
+                ->where('provider', $providerId)
+                ->first();
 
             if ($providerKey === null) {
-                throw new InvalidArgumentException('Save an API key for this provider before testing the connection.');
+                throw new InvalidArgumentException("Save {$agentName}'s credential for this provider before testing the connection.");
             }
 
             $provider = $this->providerFactory->create(

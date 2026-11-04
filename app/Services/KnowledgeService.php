@@ -40,7 +40,11 @@ class KnowledgeService
                 'provider' => $providerId,
                 'model' => $settings?->embedding_model,
                 'key_configured' => is_string($providerId)
-                    && $user->apiKeys()->where('provider', $providerId)->whereNotNull('api_key')->exists(),
+                    && $user->apiKeys()
+                        ->where('agent_name', 'Orchestrator')
+                        ->where('provider', $providerId)
+                        ->whereNotNull('api_key')
+                        ->exists(),
             ],
         ]);
     }

@@ -147,6 +147,7 @@ let pendingTaskConfirmation = null;
 let brainSettings = null;
 let brainCatalog = {};
 let brainKeys = {};
+let brainLegacyKeys = {};
 let agentPacks = [];
 let editingAgentPack = null;
 let embeddingCatalog = {};
@@ -164,6 +165,7 @@ const AGENT_LABELS = {
     Research: 'গবেষক',
     Writer: 'লেখক',
     Reviewer: 'পর্যালোচক',
+    Skeptic: 'স্বাধীন যাচাইকারী',
 };
 
 function escapeHtml(value) {
@@ -477,14 +479,19 @@ function renderEvaluationAdmin(data) {
     if (agentNames.includes(selectedAgent)) {
         elements.adminCaseAgent.value = selectedAgent;
     }
-    elements.adminEvaluationModels.innerHTML = (data.approved_models || [])
-        .filter((model) => model.credentials_configured)
+    renderEvaluationModels();
+    renderEvaluationVersions();
+    renderEvaluationResults(data.results || []);
+}
+
+function renderEvaluationModels() {
+    const agentName = elements.adminCaseAgent.value;
+    elements.adminEvaluationModels.innerHTML = (adminEvaluationData?.approved_models || [])
+        .filter((model) => model.credentials_configured_by_agent?.[agentName])
         .map((model) => {
             const value = JSON.stringify({ provider: model.provider, model: model.model });
             return `<option value="${escapeHtml(value)}">${escapeHtml(model.provider)}/${escapeHtml(model.model)}</option>`;
-        }).join('') || '<option value="">Approve a model and configure its credentials in Brain settings</option>';
-    renderEvaluationVersions();
-    renderEvaluationResults(data.results || []);
+        }).join('') || '<option value="">Configure this agent’s credentials in Brain settings</option>';
 }
 
 function renderEvaluationVersions() {
@@ -1185,29 +1192,41 @@ function renderBrainSelectors(overrides = {}) {
 }
 
 function renderProviderKeys() {
-    elements.providerKeyList.innerHTML = Object.values(brainCatalog).map((provider) => {
-        const keyStatus = brainKeys[provider.id] || {};
-        const baseUrlField = provider.custom_base_url
-            ? `<input class="brain-key-input" type="url" data-base-url="${escapeHtml(provider.id)}" value="${escapeHtml(keyStatus.custom_base_url || '')}" placeholder="https://your-provider.example/v1" aria-label="${escapeHtml(provider.label)} base URL">`
-            : '';
+    const agentKeyGroups = Object.entries(AGENT_LABELS).map(([agentName, label]) => `
+        <section class="provider-agent-key-group" data-agent-key-card="${escapeHtml(agentName)}">
+            <h4>${escapeHtml(label)} · ${escapeHtml(agentName)}</h4>
+            <div class="provider-key-grid">${Object.values(brainCatalog).map((provider) => {
+                const keyStatus = brainKeys[agentName]?.[provider.id] || {};
+                const baseUrlField = provider.custom_base_url
+                    ? `<input class="brain-key-input" type="url" data-base-url="${escapeHtml(provider.id)}" value="${escapeHtml(keyStatus.custom_base_url || '')}" placeholder="https://your-provider.example/v1" aria-label="${escapeHtml(provider.label)} base URL for ${escapeHtml(agentName)}">`
+                    : '';
 
-        return `
-            <article class="provider-key-card">
-                <strong>${escapeHtml(provider.label)}</strong>
-                <small>${provider.requires_api_key
-                    ? (keyStatus.configured ? `Key configured: ${escapeHtml(keyStatus.masked || '********')}` : 'API key configured নয়')
-                    : (keyStatus.custom_base_url ? `Base URL configured: ${escapeHtml(keyStatus.custom_base_url)}` : 'Base URL configure করুন')}</small>
-                ${baseUrlField}
-                ${provider.requires_api_key
-                    ? `<input class="brain-key-input" type="password" autocomplete="new-password" data-api-key="${escapeHtml(provider.id)}" placeholder="${keyStatus.configured ? 'নতুন key দিলে rotate হবে' : 'আপনার API key'}" aria-label="${escapeHtml(provider.label)} API key">`
-                    : ''}
-                <div class="provider-key-actions">
-                    <button class="button button-quiet button-small" type="button" data-save-provider-key="${escapeHtml(provider.id)}">Credential সংরক্ষণ</button>
-                    ${keyStatus.configured ? `<button class="button button-quiet button-small" type="button" data-delete-provider-key="${escapeHtml(provider.id)}">মুছুন</button>` : ''}
-                </div>
-            </article>
-        `;
-    }).join('');
+                return `
+                    <article class="provider-key-card">
+                        <strong>${escapeHtml(provider.label)}</strong>
+                        <small>${provider.requires_api_key
+                            ? (keyStatus.configured ? `Key configured: ${escapeHtml(keyStatus.masked || '********')}` : 'API key configured নয়')
+                            : (keyStatus.custom_base_url ? `Base URL configured: ${escapeHtml(keyStatus.custom_base_url)}` : 'Base URL configure করুন')}</small>
+                        ${baseUrlField}
+                        ${provider.requires_api_key
+                            ? `<input class="brain-key-input" type="password" autocomplete="new-password" data-api-key="${escapeHtml(provider.id)}" placeholder="${keyStatus.configured ? 'নতুন key দিলে rotate হবে' : 'এই agent-এর API key'}" aria-label="${escapeHtml(provider.label)} API key for ${escapeHtml(agentName)}">`
+                            : ''}
+                        <div class="provider-key-actions">
+                            <button class="button button-quiet button-small" type="button" data-save-provider-key="${escapeHtml(provider.id)}" data-agent-name="${escapeHtml(agentName)}">Credential সংরক্ষণ</button>
+                            ${keyStatus.configured ? `<button class="button button-quiet button-small" type="button" data-delete-provider-key="${escapeHtml(provider.id)}" data-agent-name="${escapeHtml(agentName)}">মুছুন</button>` : ''}
+                        </div>
+                    </article>
+                `;
+            }).join('')}</div>
+        </section>
+    `).join('');
+    const legacyProviderIds = Object.keys(brainLegacyKeys || {});
+    const legacyNotice = legacyProviderIds.length
+        ? `<div class="notice notice-warning">আগের account-level credential আর কোনো agent ব্যবহার করে না. পুরোনো credential মুছে দিন: ${legacyProviderIds.map((providerId) => `
+            <button class="button button-quiet button-small" type="button" data-delete-legacy-provider-key="${escapeHtml(providerId)}">${escapeHtml(brainCatalog[providerId]?.label || providerId)} legacy key মুছুন</button>
+        `).join('')}</div>`
+        : '';
+    elements.providerKeyList.innerHTML = `${legacyNotice}${agentKeyGroups}`;
 }
 
 function renderAgentDirectory() {
@@ -1299,6 +1318,7 @@ async function loadBrainSettings() {
     brainSettings = responseData.settings || {};
     brainCatalog = responseData.catalog || {};
     brainKeys = responseData.keys || {};
+    brainLegacyKeys = responseData.legacy_keys || {};
     for (const model of brainSettings?.approved_models || []) {
         const provider = brainCatalog[model.provider];
         if (provider && !provider.models[model.model]) {
@@ -2322,24 +2342,34 @@ elements.brainSettingsForm.addEventListener('submit', async (event) => {
 elements.providerKeyList.addEventListener('click', async (event) => {
     const saveButton = event.target.closest('[data-save-provider-key]');
     const deleteButton = event.target.closest('[data-delete-provider-key]');
-    if (!saveButton && !deleteButton) {
+    const deleteLegacyButton = event.target.closest('[data-delete-legacy-provider-key]');
+    if (!saveButton && !deleteButton && !deleteLegacyButton) {
         return;
     }
 
-    const providerId = saveButton?.dataset.saveProviderKey || deleteButton.dataset.deleteProviderKey;
+    const providerId = saveButton?.dataset.saveProviderKey
+        || deleteButton?.dataset.deleteProviderKey
+        || deleteLegacyButton?.dataset.deleteLegacyProviderKey;
+    const agentName = saveButton?.dataset.agentName || deleteButton?.dataset.agentName;
     try {
-        if (deleteButton) {
-            if (!window.confirm(`${brainCatalog[providerId]?.label || providerId} credential মুছে দেবেন?`)) {
+        if (deleteLegacyButton) {
+            if (!window.confirm(`${brainCatalog[providerId]?.label || providerId} পুরোনো account-level credential মুছে দেবেন?`)) {
                 return;
             }
-            await apiRequest(`/llm/keys/${encodeURIComponent(providerId)}`, { method: 'DELETE' });
+            await apiRequest(`/llm/keys/legacy/${encodeURIComponent(providerId)}`, { method: 'DELETE' });
+        } else if (deleteButton) {
+            if (!window.confirm(`${agentName} · ${brainCatalog[providerId]?.label || providerId} credential মুছে দেবেন?`)) {
+                return;
+            }
+            await apiRequest(`/llm/keys/${encodeURIComponent(agentName)}/${encodeURIComponent(providerId)}`, { method: 'DELETE' });
         } else {
-            const apiKey = elements.providerKeyList.querySelector(`[data-api-key="${CSS.escape(providerId)}"]`)?.value.trim() || '';
-            const baseUrl = elements.providerKeyList.querySelector(`[data-base-url="${CSS.escape(providerId)}"]`)?.value.trim() || '';
+            const card = saveButton.closest('[data-agent-key-card]');
+            const apiKey = card.querySelector(`[data-api-key="${CSS.escape(providerId)}"]`)?.value.trim() || '';
+            const baseUrl = card.querySelector(`[data-base-url="${CSS.escape(providerId)}"]`)?.value.trim() || '';
             if (!apiKey && !baseUrl) {
                 throw new Error('Credential সংরক্ষণ করতে API key অথবা custom provider-এর base URL দিন।');
             }
-            await apiRequest(`/llm/keys/${encodeURIComponent(providerId)}`, {
+            await apiRequest(`/llm/keys/${encodeURIComponent(agentName)}/${encodeURIComponent(providerId)}`, {
                 method: 'PUT',
                 body: JSON.stringify({
                     ...(apiKey ? { api_key: apiKey } : {}),
@@ -3185,7 +3215,10 @@ elements.adminRefresh.addEventListener('click', async () => {
     }
 });
 
-elements.adminCaseAgent.addEventListener('change', renderEvaluationVersions);
+elements.adminCaseAgent.addEventListener('change', () => {
+    renderEvaluationModels();
+    renderEvaluationVersions();
+});
 elements.adminEvaluationCase.addEventListener('change', renderEvaluationVersions);
 
 elements.adminEvaluationCaseForm.addEventListener('submit', async (event) => {

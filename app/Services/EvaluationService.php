@@ -40,7 +40,7 @@ class EvaluationService
     }
 
     /**
-     * @return array{cases: Collection, approved_models: list<array{provider: string, model: string, credentials_configured: bool}>, specifications: Collection, results: Collection}
+     * @return array{cases: Collection, approved_models: list<array{provider: string, model: string, credentials_configured_by_agent: array<string, bool>}>, specifications: Collection, results: Collection}
      */
     public function data(User $user): array
     {
@@ -48,8 +48,18 @@ class EvaluationService
         $models = array_map(fn (array $model): array => [
             'provider' => $model['provider'],
             'model' => $model['model'],
-            'credentials_configured' => $this->providerResolver->hasConfiguredCredentials($user, $model['provider']),
+            'credentials_configured_by_agent' => array_fill_keys(
+                ['Orchestrator', 'Research', 'Writer', 'Reviewer', 'Skeptic'],
+                false,
+            ),
         ], $approvedModels);
+        foreach ($models as &$model) {
+            foreach (array_keys($model['credentials_configured_by_agent']) as $agentName) {
+                $model['credentials_configured_by_agent'][$agentName] = $this->providerResolver
+                    ->hasConfiguredCredentials($user, $model['provider'], $agentName);
+            }
+        }
+        unset($model);
 
         return [
             'cases' => EvaluationCase::query()->latest('id')->limit(100)->get(),
@@ -95,7 +105,7 @@ class EvaluationService
             if (isset($providers[$key])) {
                 throw new InvalidArgumentException('Choose each approved model only once.');
             }
-            $providers[$key] = $this->providerResolver->resolveApprovedModel($user, $selection);
+            $providers[$key] = $this->providerResolver->resolveApprovedModel($user, $selection, $agentName);
         }
 
         $this->auditLogService->record($user, 'evaluation.run.started', $cases->first(), [
@@ -164,7 +174,7 @@ class EvaluationService
         $resolved = $this->providerResolver->resolveApprovedModel($user, [
             'provider' => $result->provider,
             'model' => $result->model,
-        ]);
+        ], $result->agent_name);
         $result->status = 'running';
         $result->save();
         $this->evaluate($user, $case, $specification, $result, $resolved['provider']);

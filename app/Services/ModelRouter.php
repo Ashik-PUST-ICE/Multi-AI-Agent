@@ -251,7 +251,7 @@ class ModelRouter
             $provider = $this->catalog->provider($providerId);
             $capabilities = $this->catalog->model($providerId, $modelId);
 
-            if ($requireConfiguredCredentials && ! $this->hasConfiguredCredentials($user, $providerId, $provider)) {
+            if ($requireConfiguredCredentials && ! $this->hasConfiguredCredentials($user, $agentName, $providerId, $provider)) {
                 continue;
             }
 
@@ -446,9 +446,12 @@ class ModelRouter
     /**
      * @param  array<string, mixed>  $provider
      */
-    private function hasConfiguredCredentials(User $user, string $providerId, array $provider): bool
+    private function hasConfiguredCredentials(User $user, string $agentName, string $providerId, array $provider): bool
     {
-        $credentials = $user->apiKeys()->where('provider', $providerId)->first();
+        $credentials = $user->apiKeys()
+            ->where('agent_name', $agentName)
+            ->where('provider', $providerId)
+            ->first();
         if ($credentials === null) {
             return false;
         }

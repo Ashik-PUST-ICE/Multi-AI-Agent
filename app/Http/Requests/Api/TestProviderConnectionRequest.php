@@ -19,6 +19,7 @@ class TestProviderConnectionRequest extends FormRequest
         return [
             'provider' => ['sometimes', 'string', 'max:64'],
             'model' => ['sometimes', 'string', 'max:128'],
+            'agent_name' => ['sometimes', 'string', 'max:80', 'regex:/^[A-Za-z0-9_-]+$/'],
         ];
     }
 }

@@ -13,6 +13,7 @@ class UserApiKey extends Model
     protected $fillable = [
         'user_id',
         'tenant_id',
+        'agent_name',
         'provider',
         'api_key',
         'base_url',

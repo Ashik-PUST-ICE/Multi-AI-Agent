@@ -55,7 +55,10 @@ final class EmbeddingCatalog
             throw new InvalidArgumentException('Choose a supported embedding provider and model.');
         }
 
-        $credentials = $user->apiKeys()->where('provider', $providerId)->first();
+        $credentials = $user->apiKeys()
+            ->where('agent_name', 'Orchestrator')
+            ->where('provider', $providerId)
+            ->first();
         if ($credentials === null || ! is_string($credentials->api_key) || trim($credentials->api_key) === '') {
             throw new InvalidArgumentException('Save the selected provider API key in Brain settings before indexing files.');
         }

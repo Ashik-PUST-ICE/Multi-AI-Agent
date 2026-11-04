@@ -374,7 +374,7 @@
 
                         <section class="panel brain-section">
                             <div class="brain-section-heading">
-                                <div><h3>Provider keys</h3><p>Key encrypted অবস্থায় সংরক্ষণ হয়; এখানে plaintext আবার দেখানো হয় না।</p></div>
+                                <div><h3>Agent provider keys</h3><p>প্রতিটি agent-এর key আলাদা ও encrypted থাকে; account-level পুরোনো key কোনো agent-এর fallback হিসেবে ব্যবহার হয় না।</p></div>
                             </div>
                             <div class="provider-key-list" id="provider-key-list">
                                 <div class="empty-state">Provider key settings লোড হচ্ছে।</div>

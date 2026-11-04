@@ -14,6 +14,7 @@ class AgentPack extends Model
         'description',
         'definition',
         'definition_sha256',
+        'integrity_signature',
         'status',
         'is_builtin',
         'created_by',
@@ -26,6 +27,7 @@ class AgentPack extends Model
             'status' => 'integer',
             'definition' => 'array',
             'definition_sha256' => 'string',
+            'integrity_signature' => 'string',
             'is_builtin' => 'boolean',
             'created_by' => 'integer',
         ];
