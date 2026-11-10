@@ -24,6 +24,7 @@ class TaskCostEstimator
         array $agentSequence,
         string $mode = TASK_MODE_SANDBOX,
         ?string $brainModeOverride = null,
+        ?string $intakeComplexity = null,
     ): array {
         $settings = $user->llmSettings;
         if ($settings === null) {
@@ -62,6 +63,7 @@ class TaskCostEstimator
                     $brainModeOverride,
                     false,
                     $prompt,
+                    $intakeComplexity,
                 );
             } catch (InvalidArgumentException $exception) {
                 return [

@@ -5,18 +5,26 @@ use App\Http\Controllers\Api\AgentPackController;
 use App\Http\Controllers\Api\AgentSpecController;
 use App\Http\Controllers\Api\AgentTrustController;
 use App\Http\Controllers\Api\ApiIntegrationController;
+use App\Http\Controllers\Api\AssistantController;
+use App\Http\Controllers\Api\AssistantSettingsController;
 use App\Http\Controllers\Api\AuditLogController;
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\CodingProposalController;
+use App\Http\Controllers\Api\DeviceAuthorizationController;
+use App\Http\Controllers\Api\DeviceController;
+use App\Http\Controllers\Api\DeviceTaskQueueController;
 use App\Http\Controllers\Api\KnowledgeController;
 use App\Http\Controllers\Api\KnowledgeSystemSettingsController;
 use App\Http\Controllers\Api\McpServerController;
 use App\Http\Controllers\Api\NotificationResponseController;
 use App\Http\Controllers\Api\ObservabilityController;
 use App\Http\Controllers\Api\PlatformAdminController;
+use App\Http\Controllers\Api\ProactiveBriefingController;
 use App\Http\Controllers\Api\ProviderSettingsController;
 use App\Http\Controllers\Api\SecurityControlController;
 use App\Http\Controllers\Api\SkillController;
 use App\Http\Controllers\Api\TaskController;
+use App\Http\Controllers\Api\TaskEventStreamController;
 use App\Http\Controllers\Api\TaskReplayShareController;
 use App\Http\Controllers\Api\TaskScheduleController;
 use App\Http\Controllers\Api\ToolApprovalController;
@@ -48,6 +56,12 @@ Route::get('/v1/info', function () {
     ]);
 });
 
+Route::get('/v1/openapi.yaml', function () {
+    return response()->file(base_path('docs/openapi.yaml'), [
+        'Content-Type' => 'application/yaml; charset=UTF-8',
+    ]);
+})->name('api.v1.openapi');
+
 Route::get('/v1/task-replays/{token}', [TaskReplayShareController::class, 'show'])
     ->middleware('throttle:30,1')
     ->where('token', '[A-Za-z0-9]{64}')
@@ -68,9 +82,72 @@ Route::prefix('/v1/auth')->name('api.v1.auth.')->group(function (): void {
     Route::post('/login', [AuthController::class, 'login'])
         ->middleware('throttle:10,1')
         ->name('login');
+    Route::post('/device/code', [DeviceAuthorizationController::class, 'issueCode'])
+        ->middleware('throttle:10,1')
+        ->name('device.code');
+    Route::post('/device/token', [DeviceAuthorizationController::class, 'poll'])
+        ->middleware('throttle:30,1')
+        ->name('device.token');
+    Route::post('/device/approve', [DeviceAuthorizationController::class, 'authorizeDevice'])
+        ->middleware('throttle:5,1')
+        ->name('device.approve');
+    Route::post('/device/deny', [DeviceAuthorizationController::class, 'denyDevice'])
+        ->middleware('throttle:5,1')
+        ->name('device.deny');
 });
 
 Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
+    Route::get('/v1/coding/proposals', [CodingProposalController::class, 'index'])
+        ->name('api.v1.coding.proposals.index');
+    Route::post('/v1/coding/proposals', [CodingProposalController::class, 'store'])
+        ->middleware('throttle:20,1')
+        ->name('api.v1.coding.proposals.store');
+    Route::get('/v1/coding/proposals/{proposal}', [CodingProposalController::class, 'show'])
+        ->whereNumber('proposal')
+        ->name('api.v1.coding.proposals.show');
+    Route::post('/v1/coding/proposals/{proposal}/approve', [CodingProposalController::class, 'approve'])
+        ->whereNumber('proposal')
+        ->middleware('throttle:20,1')
+        ->name('api.v1.coding.proposals.approve');
+    Route::post('/v1/coding/proposals/{proposal}/reject', [CodingProposalController::class, 'reject'])
+        ->whereNumber('proposal')
+        ->middleware('throttle:20,1')
+        ->name('api.v1.coding.proposals.reject');
+    Route::get('/v1/devices', [DeviceController::class, 'index'])->name('api.v1.devices.index');
+    Route::post('/v1/devices', [DeviceController::class, 'store'])
+        ->middleware('throttle:10,1')
+        ->name('api.v1.devices.store');
+    Route::delete('/v1/devices/{device}', [DeviceController::class, 'destroy'])
+        ->whereNumber('device')
+        ->name('api.v1.devices.destroy');
+    Route::get('/v1/device-queue', [DeviceTaskQueueController::class, 'index'])
+        ->name('api.v1.device-queue.index');
+    Route::get('/v1/devices/{device}/queue', [DeviceTaskQueueController::class, 'pollDevice'])
+        ->whereNumber('device')
+        ->middleware('throttle:60,1')
+        ->name('api.v1.devices.queue');
+    Route::post('/v1/device-queue/{queue}/reconfirm', [DeviceTaskQueueController::class, 'reconfirm'])
+        ->whereNumber('queue')
+        ->middleware('throttle:10,1')
+        ->name('api.v1.device-queue.reconfirm');
+    Route::delete('/v1/device-queue/{queue}', [DeviceTaskQueueController::class, 'cancel'])
+        ->whereNumber('queue')
+        ->name('api.v1.device-queue.destroy');
+    Route::post('/v1/assistant/messages', [AssistantController::class, 'store'])
+        ->middleware('throttle:20,1')
+        ->name('api.v1.assistant.messages.store');
+    Route::get('/v1/assistant/conversations', [AssistantController::class, 'index'])
+        ->name('api.v1.assistant.conversations.index');
+    Route::get('/v1/assistant/conversations/{conversation}', [AssistantController::class, 'show'])
+        ->whereNumber('conversation')
+        ->name('api.v1.assistant.conversations.show');
+    Route::get('/v1/assistant/settings', [AssistantSettingsController::class, 'show'])
+        ->name('api.v1.assistant.settings.show');
+    Route::put('/v1/assistant/settings', [AssistantSettingsController::class, 'update'])
+        ->name('api.v1.assistant.settings.update');
+    Route::get('/v1/assistant/proactive/briefing', [ProactiveBriefingController::class, 'show'])
+        ->middleware('throttle:30,1')
+        ->name('api.v1.assistant.proactive.briefing');
     Route::get('/v1/audit-logs', [AuditLogController::class, 'index'])
         ->name('api.v1.audit-logs.index');
     Route::post('/v1/auth/logout', [AuthController::class, 'logout'])
@@ -151,6 +228,58 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
 
     Route::get('/v1/agent-packs', [AgentPackController::class, 'index'])->name('api.v1.agent-packs.index');
     Route::get('/v1/skills', [SkillController::class, 'index'])->name('api.v1.skills.index');
+    Route::post('/v1/skills', [SkillController::class, 'store'])
+        ->middleware('throttle:10,1')
+        ->name('api.v1.skills.store');
+    Route::post('/v1/skills/drafts/from-task/{task}', [SkillController::class, 'suggestFromTask'])
+        ->whereNumber('task')
+        ->middleware('throttle:10,1')
+        ->name('api.v1.skills.drafts.from-task');
+    Route::get('/v1/skills/{skill}', [SkillController::class, 'show'])
+        ->whereNumber('skill')
+        ->name('api.v1.skills.show');
+    Route::put('/v1/skills/{skill}', [SkillController::class, 'update'])
+        ->whereNumber('skill')
+        ->middleware('throttle:10,1')
+        ->name('api.v1.skills.update');
+    Route::post('/v1/skills/{skill}/verify', [SkillController::class, 'verify'])
+        ->whereNumber('skill')
+        ->middleware('throttle:10,1')
+        ->name('api.v1.skills.verify');
+    Route::put('/v1/skills/{skill}/enabled', [SkillController::class, 'setEnabled'])
+        ->whereNumber('skill')
+        ->name('api.v1.skills.enabled');
+    Route::post('/v1/skills/{skill}/rollback/{version}', [SkillController::class, 'rollback'])
+        ->whereNumber('skill')
+        ->whereNumber('version')
+        ->middleware('throttle:10,1')
+        ->name('api.v1.skills.rollback');
+    Route::get('/v1/skills/{skill}/evaluations', [SkillController::class, 'evaluationData'])
+        ->whereNumber('skill')
+        ->name('api.v1.skills.evaluations.index');
+    Route::get('/v1/skills/{skill}/usage', [SkillController::class, 'usage'])
+        ->whereNumber('skill')
+        ->name('api.v1.skills.usage.show');
+    Route::post('/v1/skills/{skill}/test-cases', [SkillController::class, 'storeTestCase'])
+        ->whereNumber('skill')
+        ->middleware('throttle:20,1')
+        ->name('api.v1.skills.test-cases.store');
+    Route::put('/v1/skills/{skill}/test-cases/{testCase}', [SkillController::class, 'updateTestCase'])
+        ->whereNumber('skill')
+        ->whereNumber('testCase')
+        ->middleware('throttle:20,1')
+        ->name('api.v1.skills.test-cases.update');
+    Route::delete('/v1/skills/{skill}/test-cases/{testCase}', [SkillController::class, 'deleteTestCase'])
+        ->whereNumber('skill')
+        ->whereNumber('testCase')
+        ->name('api.v1.skills.test-cases.destroy');
+    Route::put('/v1/skills/{skill}/evaluation-policy', [SkillController::class, 'setEvaluationPolicy'])
+        ->whereNumber('skill')
+        ->name('api.v1.skills.evaluation-policy.update');
+    Route::post('/v1/skills/{skill}/evaluate', [SkillController::class, 'evaluate'])
+        ->whereNumber('skill')
+        ->middleware('throttle:5,1')
+        ->name('api.v1.skills.evaluate');
     Route::put('/v1/agent-packs/{slug}/installation', [AgentPackController::class, 'install'])
         ->where('slug', '[a-z0-9-]+')
         ->name('api.v1.agent-packs.installation');
@@ -257,6 +386,12 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
     Route::get('/v1/tasks/{task}', [TaskController::class, 'show'])
         ->whereNumber('task')
         ->name('api.v1.tasks.show');
+    Route::get('/v1/tasks/{task}/events/stream', [TaskEventStreamController::class, 'stream'])
+        ->whereNumber('task')
+        ->name('api.v1.tasks.events.stream');
+    Route::get('/v1/tasks/{task}/graph', [TaskController::class, 'graph'])
+        ->whereNumber('task')
+        ->name('api.v1.tasks.graph');
     Route::get('/v1/tasks/{task}/trace', [ObservabilityController::class, 'trace'])
         ->whereNumber('task')
         ->name('api.v1.tasks.trace');
@@ -306,6 +441,10 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
                 ->where('agentName', '[A-Za-z0-9_-]+')
                 ->whereNumber('version')
                 ->name('show');
+            Route::get('/{agentName}/versions/{version}/lint', 'lint')
+                ->where('agentName', '[A-Za-z0-9_-]+')
+                ->whereNumber('version')
+                ->name('lint');
             Route::post('/{agentName}/versions', 'store')
                 ->where('agentName', '[A-Za-z0-9_-]+')
                 ->name('store');

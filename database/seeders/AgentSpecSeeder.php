@@ -3,9 +3,8 @@
 namespace Database\Seeders;
 
 use App\Models\AgentSpec;
-use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Database\Seeds\WithoutModelEvents;
-use Illuminate\DatabaseSeeder;
+use Illuminate\Database\Console\Seeds\WithoutModelEvents;
+use Illuminate\Database\Seeder;
 
 class AgentSpecSeeder extends Seeder
 {
@@ -30,6 +29,7 @@ class AgentSpecSeeder extends Seeder
 
         if ($existing !== null) {
             $this->ensureToolsMatch($existing, $definition);
+
             return;
         }
 
@@ -75,7 +75,5 @@ class AgentSpecSeeder extends Seeder
             'created_at' => $now,
             'updated_at' => $now,
         ]);
-    }
-}
     }
 }

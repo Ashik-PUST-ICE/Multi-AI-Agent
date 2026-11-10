@@ -23,6 +23,7 @@ class TaskSchedule extends Model
         'next_run_at',
         'expires_at',
         'enabled',
+        'task_brief_reviewed',
         'last_scheduled_at',
         'cancelled_at',
     ];
@@ -32,6 +33,7 @@ class TaskSchedule extends Model
         return [
             'weekday' => 'integer',
             'enabled' => 'integer',
+            'task_brief_reviewed' => 'boolean',
             'next_run_at' => 'datetime',
             'expires_at' => 'datetime',
             'last_scheduled_at' => 'datetime',

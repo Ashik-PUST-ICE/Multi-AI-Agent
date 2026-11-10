@@ -79,6 +79,7 @@ class RunScheduledTaskJob implements ShouldQueue
                 'user_id' => (int) $run->user_id,
                 'title' => $schedule->title,
                 'prompt' => $schedule->prompt,
+                'task_brief_reviewed' => $schedule->task_brief_reviewed,
             ];
         });
 
@@ -92,6 +93,7 @@ class RunScheduledTaskJob implements ShouldQueue
             'title' => $runData['title'],
             'prompt' => $runData['prompt'],
             'scheduled_task_run_id' => $run->id,
+            'scheduled_task_brief_reviewed' => $runData['task_brief_reviewed'],
         ]);
 
         if ($response->getStatusCode() !== 202) {

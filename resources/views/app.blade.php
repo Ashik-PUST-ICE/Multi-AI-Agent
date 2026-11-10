@@ -4,6 +4,10 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#111827">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="icon" href="/icons/app-icon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="/icons/app-icon.svg">
     <title>{{ config('app.name', 'Multi-AI-Agent') }}</title>
     @vite(['resources/css/app.css', 'resources/js/app.js'])
 </head>
@@ -139,6 +143,24 @@
                         <input id="task-title" name="title" type="text" maxlength="255" placeholder="যেমন: একটি বিষয় নিয়ে গবেষণা" required>
                         <label for="task-prompt">কী করতে হবে?</label>
                         <textarea id="task-prompt" name="prompt" rows="5" maxlength="20000" placeholder="কাজটি বিস্তারিত লিখুন..." required></textarea>
+                        <div class="assistant-input-actions">
+                            <button class="button button-quiet button-small" id="voice-input-button" type="button" disabled>কণ্ঠে লিখুন</button>
+                            <span id="voice-input-status" class="form-help" role="status">Voice input সেটিংসে বন্ধ। Voice কখনো authentication নয়।</span>
+                        </div>
+                        <div class="vision-capture">
+                            <div class="assistant-input-actions">
+                                <button class="button button-quiet button-small" id="camera-start-button" type="button" disabled>ক্যামেরা চালু করুন</button>
+                                <button class="button button-quiet button-small" id="camera-capture-button" type="button" disabled hidden>ছবি তুলুন</button>
+                                <button class="button button-quiet button-small" id="camera-stop-button" type="button" hidden>ক্যামেরা বন্ধ</button>
+                                <span id="camera-status" class="form-help" role="status">Camera vision সেটিংসে বন্ধ।</span>
+                            </div>
+                            <video id="camera-preview" playsinline muted hidden></video>
+                            <img id="camera-captured-image" alt="Task-এর জন্য তোলা private camera image" hidden>
+                            <label id="vision-confirmation-label" class="vision-confirmation" hidden>
+                                <input id="vision-confirmation" type="checkbox">
+                                এই ছবিটি নির্বাচিত approved vision model-এ পাঠাতে সম্মতি দিচ্ছি। এটি private task attachment হিসেবে সর্বোচ্চ ৩০ দিন থাকবে।
+                            </label>
+                        </div>
                         <label for="task-success-criteria">সাফল্যের শর্ত (প্রতি লাইনে একটি, ঐচ্ছিক)</label>
                         <textarea id="task-success-criteria" name="success_criteria" rows="3" maxlength="5000" placeholder="যেমন: অন্তত ৩টি নির্ভরযোগ্য উৎস ব্যবহার করবে&#10;উত্তরটি বাংলায় দেবে"></textarea>
                         <button class="button button-quiet button-small" id="apply-task-criteria" type="button" hidden>প্রস্তাবিত criteria সম্পাদনার জন্য যোগ করুন</button>
@@ -163,6 +185,17 @@
                         </div>
                         <div class="task-estimate" id="task-estimate" role="status" hidden></div>
                     </form>
+
+                    <section class="panel task-schedules-panel" id="proactive-briefing" aria-labelledby="proactive-briefing-heading" hidden>
+                        <div class="list-heading">
+                            <div>
+                                <h2 id="proactive-briefing-heading">আজকের সংক্ষিপ্ত বিবরণ</h2>
+                                <p id="proactive-briefing-status">শুধু আপনার অসমাপ্ত কাজের তথ্য দেখানো হবে।</p>
+                            </div>
+                            <button class="button button-quiet button-small" id="load-proactive-briefing" type="button">আজকের প্রস্তাব দেখুন</button>
+                        </div>
+                        <div class="task-list" id="proactive-briefing-list" aria-live="polite"></div>
+                    </section>
 
                     <section class="panel task-schedules-panel" aria-labelledby="task-schedules-heading">
                         <div class="list-heading">
@@ -194,6 +227,7 @@
                             <input id="schedule-timezone" name="timezone" type="hidden">
                             <small class="form-help">সময় আপনার browser timezone অনুযায়ী। পুনরাবৃত্ত schedule-এর শেষ সময় বাধ্যতামূলক। প্রতিটি তৈরি task স্বাভাবিক approval ও trust policy মেনে চলে।</small>
                             <button class="button button-primary" type="submit">Schedule সংরক্ষণ</button>
+                            <div id="task-schedule-estimate" class="task-estimate" role="status" hidden></div>
                         </form>
                         <div id="task-schedule-list" class="task-schedule-list" aria-live="polite">
                             <div class="empty-state">Schedule দেখতে API token দিয়ে সংযুক্ত করুন।</div>
@@ -387,6 +421,42 @@
                         </div>
                     </form>
 
+                    <section class="panel brain-section" aria-labelledby="assistant-settings-heading">
+                        <div class="brain-section-heading">
+                            <div><h3 id="assistant-settings-heading">Jarvis layer: persona, voice, vision ও smart home</h3><p>Persona শুধু tone বদলায়; safety, Trust, Access, tool permission বা authentication নয়।</p></div>
+                        </div>
+                        <form id="assistant-settings-form" class="task-form">
+                            <label for="assistant-persona">Assistant persona</label>
+                            <select id="assistant-persona" name="persona">
+                                <option value="friendly">বন্ধুসুলভ</option>
+                                <option value="concise">সংক্ষিপ্ত</option>
+                                <option value="professional">পেশাদার</option>
+                                <option value="custom">নিজস্ব style</option>
+                            </select>
+                            <label for="assistant-custom-persona">নিজস্ব style preference (সর্বোচ্চ ৫০০ অক্ষর)</label>
+                            <textarea id="assistant-custom-persona" name="custom_persona" rows="2" maxlength="500" placeholder="উদাহরণ: বাংলায় সংক্ষিপ্ত উত্তর দিন।"></textarea>
+                            <label><input id="assistant-voice-input" name="voice_input_enabled" type="checkbox"> Browser speech recognition দিয়ে prompt লিখুন</label>
+                            <label><input id="assistant-voice-output" name="voice_output_enabled" type="checkbox"> ফলাফল শুনতে browser speech ব্যবহার করুন</label>
+                            <label for="assistant-voice-language">Voice language
+                                <select id="assistant-voice-language" name="voice_language">
+                                    <option value="bn-BD">বাংলা</option>
+                                    <option value="en-US">English</option>
+                                </select>
+                            </label>
+                            <label><input id="assistant-vision-enabled" name="vision_enabled" type="checkbox"> Camera capture option চালু করুন (camera নিজে থেকে চালু হবে না)</label>
+                            <label><input id="assistant-proactive-enabled" name="proactive_enabled" type="checkbox"> ঐচ্ছিক দৈনিক task briefing চালু করুন</label>
+                            <label for="assistant-proactive-limit">প্রতিদিন সর্বোচ্চ প্রস্তাব
+                                <input id="assistant-proactive-limit" name="proactive_max_suggestions" type="number" min="1" max="10" value="3">
+                            </label>
+                            <div class="notice notice-info">Voice recognition কেবল সুবিধা—কখনো authentication বা অনুমোদন নয়। Browser বা operating-system speech service audio process করতে পারে; microphone শুধু আপনার click-এর পর চালু হয়। Camera default-এ off; ছবি তুলতে user action ও upload consent লাগে।</div>
+                            <div class="notice notice-info">Smart-home actions বর্তমানে বন্ধ। Locks, stoves ও gas devices সবসময় Never-Auto; কোনো device control integration চালু নেই।</div>
+                            <div class="form-footer">
+                                <span id="assistant-settings-status">Smart-home actions disabled.</span>
+                                <button class="button button-primary" type="submit">Assistant settings সংরক্ষণ</button>
+                            </div>
+                        </form>
+                    </section>
+
                     <section class="panel brain-section" aria-labelledby="web-access-heading">
                         <div class="brain-section-heading">
                             <div>
@@ -482,13 +552,53 @@
                         <div>
                             <p class="eyebrow">PROGRESSIVE TASK GUIDANCE</p>
                             <h2 id="skills-heading">Skills</h2>
-                            <p class="section-description">শুধু curated built-in skill চালু আছে। Task অনুযায়ী সর্বোচ্চ দুটি skill-এর নির্দেশনা দেওয়া হয়; কোনো skill tool বা trust permission দিতে পারে না।</p>
+                            <p class="section-description">Task অনুযায়ী সর্বোচ্চ দুটি verified skill-এর নির্দেশনা দেওয়া হয়; কোনো skill tool বা trust permission দিতে পারে না।</p>
                         </div>
                     </div>
+                    <form class="task-form panel skill-form" id="skill-form">
+                        <strong id="skill-form-heading">নিজস্ব skill draft তৈরি করুন</strong>
+                        <label for="skill-name">নাম</label>
+                        <input id="skill-name" name="name" type="text" maxlength="120" required>
+                        <label for="skill-description">সংক্ষিপ্ত বর্ণনা</label>
+                        <textarea id="skill-description" name="description" rows="2" maxlength="1000" required></textarea>
+                        <label for="skill-instructions">SKILL.md নির্দেশনা</label>
+                        <textarea id="skill-instructions" name="instructions" rows="5" minlength="20" maxlength="20000" required></textarea>
+                        <div class="schedule-fields">
+                            <label for="skill-visibility">দৃশ্যমানতা
+                                <select id="skill-visibility" name="visibility">
+                                    <option value="personal">শুধু আমার জন্য</option>
+                                    <option value="tenant">আমার workspace (যাচাইয়ের পর)</option>
+                                </select>
+                            </label>
+                            <label for="skill-source">উৎস
+                                <select id="skill-source" name="source">
+                                    <option value="authored">নিজে তৈরি</option>
+                                    <option value="external_upload">বাইরে থেকে কপি করা</option>
+                                </select>
+                            </label>
+                        </div>
+                        <div id="external-skill-fields" hidden>
+                            <label for="skill-publisher">প্রকাশকের দাবি (যাচাই করা নয়)</label>
+                            <input id="skill-publisher" name="publisher_claim" type="text" maxlength="160">
+                            <label for="skill-source-reference">উৎসের উল্লেখ (ফেচ বা যাচাই করা হবে না)</label>
+                            <input id="skill-source-reference" name="source_reference" type="text" maxlength="500">
+                            <label><input id="skill-external-confirmed" name="external_install_confirmed" type="checkbox"> আমি এই বাইরের skill text নিজে পর্যালোচনা করে জমা দিচ্ছি।</label>
+                        </div>
+                        <input id="skill-edit-id" type="hidden">
+                        <input id="skill-expected-hash" type="hidden">
+                        <div class="brain-save-row">
+                            <span id="skill-form-status">Draft নিষ্ক্রিয় থাকবে যতক্ষণ না hash মিলিয়ে owner verify করেন। Script execution বন্ধ।</span>
+                            <div>
+                                <button class="button button-quiet button-small" id="skill-form-cancel" type="button" hidden>সম্পাদনা বাতিল</button>
+                                <button class="button button-primary" id="skill-form-submit" type="submit">Draft সংরক্ষণ</button>
+                            </div>
+                        </div>
+                    </form>
                     <div class="agent-directory" id="skill-directory" aria-live="polite">
                         <div class="empty-state">Skills তালিকা লোড হচ্ছে।</div>
                     </div>
-                    <p class="form-help">বাইরের skill install, skill script execution, version publishing ও skill-generated suggestions এখনো বন্ধ।</p>
+                    <section class="panel skill-evaluation-panel" id="skill-evaluation-panel" aria-live="polite" hidden></section>
+                    <p class="form-help">External content শুধু ব্যবহারকারীর স্পষ্ট জমায় আসে; remote fetch বা agent-initiated install নেই। Skill script execution সবসময় বন্ধ।</p>
                 </section>
 
                 <section class="view-panel" id="access-view" aria-labelledby="access-heading">
@@ -718,6 +828,7 @@
                         <section class="panel admin-panel">
                             <h3>Active agents and prompt versions</h3>
                             <div id="admin-agent-list" class="admin-list"></div>
+                            <div id="admin-prompt-lint-results" class="admin-list" aria-live="polite"></div>
                         </section>
                         <section class="panel admin-panel">
                             <h3>Recent users</h3>

@@ -23,6 +23,7 @@ class CreateTaskScheduleRequest extends FormRequest
             'starts_at' => ['required', 'date', 'after:now'],
             'timezone' => ['required', 'timezone'],
             'expires_at' => ['required_if:cadence,daily,weekly', 'nullable', 'date', 'after:starts_at'],
+            'task_brief_review_token' => ['sometimes', 'string', 'max:4096'],
         ];
     }
 }

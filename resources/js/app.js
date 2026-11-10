@@ -1,5 +1,10 @@
 import './bootstrap';
 
+if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/service-worker.js')
+        .catch((error) => console.error('PWA service worker registration failed.', error));
+}
+
 const API_BASE = '/api/v1';
 const TOKEN_STORAGE_KEY = 'multi-ai-agent.api-token';
 const STATUS_LABELS = {
@@ -66,6 +71,7 @@ const elements = {
     adminAlertList: document.querySelector('#admin-alert-list'),
     adminSummary: document.querySelector('#admin-summary'),
     adminAgentList: document.querySelector('#admin-agent-list'),
+    adminPromptLintResults: document.querySelector('#admin-prompt-lint-results'),
     adminUserList: document.querySelector('#admin-user-list'),
     adminEvaluationCaseForm: document.querySelector('#admin-evaluation-case-form'),
     adminCaseAgent: document.querySelector('#admin-case-agent'),
@@ -90,6 +96,30 @@ const elements = {
     routingPolicy: document.querySelector('#routing-policy'),
     maxTaskCost: document.querySelector('#max-task-cost'),
     budgetCurrency: document.querySelector('#budget-currency'),
+    assistantSettingsForm: document.querySelector('#assistant-settings-form'),
+    assistantPersona: document.querySelector('#assistant-persona'),
+    assistantCustomPersona: document.querySelector('#assistant-custom-persona'),
+    assistantVoiceInput: document.querySelector('#assistant-voice-input'),
+    assistantVoiceOutput: document.querySelector('#assistant-voice-output'),
+    assistantVoiceLanguage: document.querySelector('#assistant-voice-language'),
+    assistantVisionEnabled: document.querySelector('#assistant-vision-enabled'),
+    assistantProactiveEnabled: document.querySelector('#assistant-proactive-enabled'),
+    assistantProactiveLimit: document.querySelector('#assistant-proactive-limit'),
+    assistantSettingsStatus: document.querySelector('#assistant-settings-status'),
+    proactiveBriefing: document.querySelector('#proactive-briefing'),
+    proactiveBriefingButton: document.querySelector('#load-proactive-briefing'),
+    proactiveBriefingStatus: document.querySelector('#proactive-briefing-status'),
+    proactiveBriefingList: document.querySelector('#proactive-briefing-list'),
+    voiceInputButton: document.querySelector('#voice-input-button'),
+    voiceInputStatus: document.querySelector('#voice-input-status'),
+    cameraStartButton: document.querySelector('#camera-start-button'),
+    cameraCaptureButton: document.querySelector('#camera-capture-button'),
+    cameraStopButton: document.querySelector('#camera-stop-button'),
+    cameraStatus: document.querySelector('#camera-status'),
+    cameraPreview: document.querySelector('#camera-preview'),
+    cameraCapturedImage: document.querySelector('#camera-captured-image'),
+    visionConfirmationLabel: document.querySelector('#vision-confirmation-label'),
+    visionConfirmation: document.querySelector('#vision-confirmation'),
     modelCatalog: document.querySelector('#model-catalog'),
     providerKeyList: document.querySelector('#provider-key-list'),
     connectionForm: document.querySelector('#connection-form'),
@@ -105,6 +135,7 @@ const elements = {
     taskDetail: document.querySelector('#task-detail'),
     taskForm: document.querySelector('#task-form'),
     taskScheduleForm: document.querySelector('#task-schedule-form'),
+    taskScheduleEstimate: document.querySelector('#task-schedule-estimate'),
     taskScheduleList: document.querySelector('#task-schedule-list'),
     scheduleCadence: document.querySelector('#schedule-cadence'),
     scheduleExpiryField: document.querySelector('#schedule-expiry-field'),
@@ -117,6 +148,10 @@ const elements = {
     skepticSignal: document.querySelector('#skeptic-signal'),
     failureCategories: document.querySelector('#failure-categories'),
     skillDirectory: document.querySelector('#skill-directory'),
+    skillEvaluationPanel: document.querySelector('#skill-evaluation-panel'),
+    skillForm: document.querySelector('#skill-form'),
+    skillSource: document.querySelector('#skill-source'),
+    externalSkillFields: document.querySelector('#external-skill-fields'),
     tokenInput: document.querySelector('#api-token'),
     views: document.querySelectorAll('.view-panel'),
     navigationButtons: document.querySelectorAll('[data-view]'),
@@ -142,12 +177,18 @@ let selectedTaskId = null;
 let refreshTimer = null;
 let realtimeRefreshTimer = null;
 let taskEcho = null;
+let assistantSettings = null;
+let cameraStream = null;
+let visionImageFile = null;
+let visionPreviewUrl = null;
 let liveResponseDraft = null;
 let pendingTaskConfirmation = null;
+let pendingTaskScheduleConfirmation = null;
 let brainSettings = null;
 let brainCatalog = {};
 let brainKeys = {};
 let brainLegacyKeys = {};
+let credentialAgents = [];
 let agentPacks = [];
 let editingAgentPack = null;
 let embeddingCatalog = {};
@@ -160,11 +201,14 @@ let adminEvaluationRefreshTimer = null;
 let adminEvaluationRefreshAttempts = 0;
 let systemKillSwitchEnabled = false;
 let authMode = 'login';
-const AGENT_LABELS = {
+const BRAIN_AGENT_LABELS = {
     Orchestrator: 'পরিকল্পনাকারী',
     Research: 'গবেষক',
     Writer: 'লেখক',
     Reviewer: 'পর্যালোচক',
+};
+const AGENT_LABELS = {
+    ...BRAIN_AGENT_LABELS,
     Skeptic: 'স্বাধীন যাচাইকারী',
 };
 
@@ -176,6 +220,10 @@ function escapeHtml(value) {
         '"': '&quot;',
         "'": '&#039;',
     })[character]);
+}
+
+function agentLabel(agentName) {
+    return AGENT_LABELS[agentName] || agentName;
 }
 
 function showNotice(element, message) {
@@ -266,6 +314,64 @@ async function apiRequest(path, options = {}) {
     return responseData;
 }
 
+function updateAssistantControls() {
+    const speechRecognitionAvailable = Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
+    const cameraAvailable = Boolean(navigator.mediaDevices?.getUserMedia);
+    elements.voiceInputButton.disabled = !assistantSettings?.voice_input_enabled || !speechRecognitionAvailable;
+    elements.voiceInputStatus.textContent = !assistantSettings?.voice_input_enabled
+        ? 'Voice input সেটিংসে বন্ধ। Voice কখনো authentication নয়।'
+        : speechRecognitionAvailable
+            ? 'ক্লিক করলে browser microphone permission চাইবে।'
+            : 'এই browser-এ speech recognition নেই।';
+    elements.cameraStartButton.disabled = !assistantSettings?.vision_enabled || !cameraAvailable;
+    if (!assistantSettings?.vision_enabled) {
+        stopAssistantCamera();
+        visionImageFile = null;
+        if (visionPreviewUrl) {
+            URL.revokeObjectURL(visionPreviewUrl);
+            visionPreviewUrl = null;
+        }
+        elements.cameraCapturedImage.removeAttribute('src');
+        elements.cameraCapturedImage.hidden = true;
+        elements.visionConfirmation.checked = false;
+        elements.visionConfirmationLabel.hidden = true;
+    }
+    elements.cameraStatus.textContent = !assistantSettings?.vision_enabled
+        ? 'Camera vision সেটিংসে বন্ধ।'
+        : cameraAvailable
+            ? 'Camera বন্ধ আছে; চালু করতে click করুন। ছবি পাঠানোর আগে confirmation লাগবে।'
+            : 'এই browser-এ camera capture সমর্থিত নয়।';
+}
+
+async function loadAssistantSettings() {
+    const responseData = await apiRequest('/assistant/settings');
+    assistantSettings = responseData.settings;
+    elements.assistantPersona.value = assistantSettings.persona || 'friendly';
+    elements.assistantCustomPersona.value = assistantSettings.custom_persona || '';
+    elements.assistantVoiceInput.checked = assistantSettings.voice_input_enabled === true;
+    elements.assistantVoiceOutput.checked = assistantSettings.voice_output_enabled === true;
+    elements.assistantVoiceLanguage.value = assistantSettings.voice_language || 'bn-BD';
+    elements.assistantVisionEnabled.checked = assistantSettings.vision_enabled === true;
+    elements.assistantProactiveEnabled.checked = assistantSettings.proactive_enabled === true;
+    elements.assistantProactiveLimit.value = String(assistantSettings.proactive_max_suggestions || 3);
+    elements.proactiveBriefing.hidden = !assistantSettings.proactive_enabled;
+    elements.assistantCustomPersona.disabled = assistantSettings.persona !== 'custom';
+    elements.assistantSettingsStatus.textContent = responseData.safety.smart_home_actions_enabled
+        ? 'Smart-home actions enabled.'
+        : 'Smart-home actions disabled; Never-Auto devices remain blocked.';
+    updateAssistantControls();
+}
+
+function stopAssistantCamera() {
+    cameraStream?.getTracks().forEach((track) => track.stop());
+    cameraStream = null;
+    elements.cameraPreview.srcObject = null;
+    elements.cameraPreview.hidden = true;
+    elements.cameraStartButton.hidden = false;
+    elements.cameraCaptureButton.hidden = true;
+    elements.cameraStopButton.hidden = true;
+}
+
 async function publicApiRequest(path, options = {}) {
     const requestHeaders = {
         Accept: 'application/json',
@@ -317,7 +423,7 @@ async function activateToken(token, displayName = '') {
     elements.platformAdminMore.hidden = !canManagePlatform;
     setConnected(true);
     connectTaskRealtime(userResponse.user.id);
-    await Promise.all([loadTasks(), loadApprovals(), loadAccess(), loadNotifications(), loadTaskSchedules()]);
+    await Promise.all([loadTasks(), loadApprovals(), loadAccess(), loadNotifications(), loadTaskSchedules(), loadAssistantSettings()]);
     await loadAgentPacks();
     await loadKnowledge();
 }
@@ -342,6 +448,7 @@ function connectTaskRealtime(userId) {
         } else {
             scheduleTaskRefresh();
         }
+        loadTasks().catch((error) => showNotice(elements.error, error.message));
     });
 }
 
@@ -451,7 +558,11 @@ function renderPlatformDashboard(dashboard) {
             </article>
         `).join('');
     elements.adminAgentList.innerHTML = (dashboard.active_agent_specs || []).map((spec) => `
-        <article class="admin-list-item"><strong>${escapeHtml(spec.agent_name)}</strong><span>Active prompt v${escapeHtml(spec.version)}</span></article>
+        <article class="admin-list-item">
+            <strong>${escapeHtml(spec.agent_name)}</strong>
+            <span>Active prompt v${escapeHtml(spec.version)}</span>
+            <button class="button button-quiet button-small" type="button" data-prompt-lint-agent="${escapeHtml(spec.agent_name)}" data-prompt-lint-version="${escapeHtml(spec.version)}">Prompt lint</button>
+        </article>
     `).join('') || '<div class="empty-state">No active agent specifications.</div>';
     elements.adminUserList.innerHTML = (dashboard.recent_users || []).map((user) => `
         <article class="admin-list-item"><strong>${escapeHtml(user.name)}</strong><span>${escapeHtml(user.email)} · ${escapeHtml(formatDate(user.created_at))}</span></article>
@@ -643,17 +754,374 @@ async function loadNotifications() {
 async function loadSkills() {
     const responseData = await apiRequest('/skills');
     const skills = responseData.skills || [];
-    elements.skillDirectory.innerHTML = skills.map((skill) => `
-        <article class="panel agent-directory-card">
-            <div class="agent-directory-heading">
-                <h3>${escapeHtml(skill.name)}</h3>
-                <span class="status-chip">${escapeHtml(skill.version)} · ${escapeHtml(skill.status)}</span>
-            </div>
-            <p>${escapeHtml(skill.description)}</p>
-            <small>Owner: ${escapeHtml(skill.owner)} · Minimum trust: ${escapeHtml(skill.minimum_trust_level)} · Required tools: ${skill.required_tools.length ? escapeHtml(skill.required_tools.join(', ')) : 'none'} · Scripts: disabled</small>
-        </article>
-    `).join('');
+    elements.skillDirectory.innerHTML = skills.map((skill) => {
+        const findings = skill.scan_findings?.length
+            ? `<p class="skill-findings">Safety scan: ${escapeHtml(skill.scan_findings.join(', '))}</p>`
+            : '';
+        const actions = skill.can_manage
+            ? `
+                <button class="button button-quiet button-small" type="button" data-skill-evaluation="${escapeHtml(skill.id)}">Tests ও scores</button>
+                ${skill.verification_status === 'pending_review' && !skill.scan_findings?.length
+        ? `<button class="button button-approve button-small" type="button" data-skill-verify="${escapeHtml(skill.id)}" data-skill-hash="${escapeHtml(skill.content_hash || '')}">Hash মিলিয়ে review ও enable</button>`
+        : ''}
+                ${skill.verification_status === 'verified'
+        ? `<button class="button button-quiet button-small" type="button" data-skill-enabled="${escapeHtml(skill.id)}" data-enabled="${skill.status !== 'active'}">${skill.status === 'active' ? 'বন্ধ করুন' : 'চালু করুন'}</button>`
+        : ''}
+                <button class="button button-quiet button-small" type="button" data-skill-edit="${escapeHtml(skill.id)}">Edit</button>
+            `
+            : '';
+        const versions = skill.can_manage && skill.versions?.length > 1
+            ? `<details><summary>Version history</summary><ul class="skill-version-list">${skill.versions.filter((version) => !version.current).map((version) => `
+                <li>v${escapeHtml(version.version)} · ${escapeHtml(version.verification_status)}
+                    <button class="button button-quiet button-small" type="button" data-skill-rollback="${escapeHtml(skill.id)}" data-skill-version="${escapeHtml(version.id)}">এই version থেকে draft</button>
+                </li>
+            `).join('')}</ul></details>`
+            : '';
+
+        return `
+            <article class="panel agent-directory-card">
+                <div class="agent-directory-heading">
+                    <h3>${escapeHtml(skill.name)}</h3>
+                    <span class="status-chip">v${escapeHtml(skill.version ?? '—')} · ${escapeHtml(skill.status)}</span>
+                </div>
+                <p>${escapeHtml(skill.description)}</p>
+                <small>Owner: ${escapeHtml(skill.owner)} · Visibility: ${escapeHtml(skill.visibility)} · Trust: unchanged · Tools: none · Scripts: disabled</small>
+                ${skill.source === 'external_upload' ? '<small>External origin is user-claimed, not independently verified; no remote fetching.</small>' : ''}
+                ${findings}
+                <div class="approval-actions">${actions}</div>
+                ${versions}
+            </article>
+        `;
+    }).join('') || '<div class="empty-state">কোনো skill পাওয়া যায়নি।</div>';
 }
+
+async function loadSkillEvaluation(skillId) {
+    const [responseData, usageData, skillData] = await Promise.all([
+        apiRequest(`/skills/${encodeURIComponent(skillId)}/evaluations`),
+        apiRequest(`/skills/${encodeURIComponent(skillId)}/usage`),
+        apiRequest(`/skills/${encodeURIComponent(skillId)}`),
+    ]);
+    const skill = skillData.skill;
+    const evaluation = responseData.evaluation;
+    const usage = usageData.usage;
+    const cases = evaluation.test_cases || [];
+    const runs = evaluation.runs || [];
+    elements.skillEvaluationPanel.hidden = false;
+    elements.skillEvaluationPanel.innerHTML = `
+        <div class="skill-evaluation-heading">
+            <div>
+                <h3>${escapeHtml(skill.name)} · evaluation</h3>
+                <p>Runs use the approved Research model in a tool-free sandbox. Outputs are not stored. Scores use lexical reference matching and literal criteria, not a semantic quality certification.</p>
+            </div>
+            <button class="button button-quiet button-small" type="button" data-skill-evaluation-close>Close</button>
+        </div>
+        <form class="skill-evaluation-policy" data-skill-evaluation-policy="${escapeHtml(skillId)}">
+            <label><input name="auto_disable" type="checkbox" ${evaluation.policy.auto_disable ? 'checked' : ''}> Auto-disable below minimum score (opt-in)</label>
+            <label>Minimum score
+                <input name="minimum_score" type="number" min="0" max="100" step="0.01" value="${escapeHtml(evaluation.policy.minimum_score ?? '')}" placeholder="e.g. 70">
+            </label>
+            <button class="button button-quiet button-small" type="submit">Save evaluation policy</button>
+        </form>
+        <form class="skill-evaluation-case-form" data-skill-test-case-form="${escapeHtml(skillId)}">
+            <strong data-skill-test-case-heading>Add evaluation test case</strong>
+            <input name="test_case_id" type="hidden">
+            <label>Name <input name="name" maxlength="120" required></label>
+            <label>Prompt <textarea name="prompt" rows="3" maxlength="5000" required></textarea></label>
+            <label>Reference answer (optional) <textarea name="reference_answer" rows="2" maxlength="5000"></textarea></label>
+            <label>Must-include criteria (one per line) <textarea name="criteria" rows="2" maxlength="2500" placeholder="Required phrase"></textarea></label>
+            <div class="approval-actions">
+                <button class="button button-primary button-small" type="submit">Save test case</button>
+                <button class="button button-quiet button-small" type="button" data-skill-test-case-cancel hidden>Cancel edit</button>
+            </div>
+        </form>
+        <div class="skill-evaluation-cases">
+            <h4>Test cases (${cases.length}/20)</h4>
+            ${cases.length ? cases.map((testCase) => `
+                <article class="skill-evaluation-case">
+                    <div><strong>${escapeHtml(testCase.name)}</strong><small>${escapeHtml(testCase.prompt)}</small></div>
+                    <div class="approval-actions">
+                        <button class="button button-quiet button-small" type="button" data-skill-test-case-edit="${escapeHtml(testCase.id)}">Edit</button>
+                        <button class="button button-quiet button-small" type="button" data-skill-test-case-delete="${escapeHtml(testCase.id)}">Delete</button>
+                    </div>
+                </article>
+            `).join('') : '<p>No evaluation test cases yet.</p>'}
+        </div>
+        <div class="skill-evaluation-runs">
+            <div class="skill-evaluation-heading">
+                <h4>Recent evaluation runs</h4>
+                <button class="button button-approve button-small" type="button" data-skill-run-evaluation="${escapeHtml(skillId)}">Run now</button>
+            </div>
+            ${runs.length ? runs.map((run) => `
+                <article class="skill-evaluation-case">
+                    <div><strong>${escapeHtml(run.status)} · ${run.score === null ? '—' : `${escapeHtml(run.score)} / 100`}</strong>
+                        <small>v${escapeHtml(run.version ?? '—')} · ${escapeHtml(run.provider)} / ${escapeHtml(run.model)} · ${escapeHtml(run.case_count)} cases</small>
+                    </div>
+                    <small>Tokens: ${escapeHtml(run.token_usage?.total_tokens ?? 0)}</small>
+                </article>
+                ${run.case_results?.length ? run.case_results.map((result) => `
+                    <p class="skill-evaluation-result">${escapeHtml(result.name)}: ${escapeHtml(result.score)} / 100</p>
+                `).join('') : ''}
+            `).join('') : '<p>No evaluation runs yet.</p>'}
+        </div>
+        <div class="skill-evaluation-runs">
+            <h4>Usage analytics</h4>
+            <p>Per-skill cost sums the full task cost for every skill used in that task; it is attribution, not an additive allocation. Missing user-entered rates are unpriced.</p>
+            <div class="skill-usage-metrics">
+                <span><strong>${escapeHtml(usage.uses)}</strong> matched uses</span>
+                <span><strong>${escapeHtml(usage.completed)}</strong> completed</span>
+                <span><strong>${escapeHtml(usage.failed)}</strong> failed</span>
+                <span><strong>${escapeHtml(usage.success_rate === null ? '—' : `${usage.success_rate}%`)}</strong> success rate</span>
+                <span><strong>${escapeHtml(usage.token_usage.total_tokens)}</strong> tokens</span>
+                ${Object.entries(usage.cost_by_currency || {}).map(([currency, amount]) => `
+                    <span><strong>${escapeHtml(amount)}</strong> ${escapeHtml(currency)} task cost</span>
+                `).join('') || '<span><strong>—</strong>No priced cost recorded</span>'}
+            </div>
+            ${usage.uses_by_version?.length ? `<ul class="skill-version-list">${usage.uses_by_version.map((version) => `
+                <li>v${escapeHtml(version.version)} · ${escapeHtml(version.uses)} uses · ${escapeHtml(version.completed)} completed · ${escapeHtml(version.failed)} failed</li>
+            `).join('')}</ul>` : '<p>No matched task uses recorded yet.</p>'}
+        </div>
+    `;
+}
+
+function resetSkillForm() {
+    elements.skillForm.reset();
+    elements.skillForm.querySelector('#skill-edit-id').value = '';
+    elements.skillForm.querySelector('#skill-expected-hash').value = '';
+    elements.skillForm.querySelector('#skill-form-heading').textContent = 'নিজস্ব skill draft তৈরি করুন';
+    elements.skillForm.querySelector('#skill-form-submit').textContent = 'Draft সংরক্ষণ';
+    elements.skillForm.querySelector('#skill-form-cancel').hidden = true;
+    elements.skillSource.disabled = false;
+    elements.externalSkillFields.hidden = true;
+    elements.skillForm.querySelector('#skill-form-status').textContent = 'Draft নিষ্ক্রিয় থাকবে যতক্ষণ না hash মিলিয়ে owner verify করেন। Script execution বন্ধ।';
+}
+
+elements.skillSource.addEventListener('change', () => {
+    elements.externalSkillFields.hidden = elements.skillSource.value !== 'external_upload';
+});
+
+elements.skillForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const formData = new FormData(elements.skillForm);
+    const skillId = elements.skillForm.querySelector('#skill-edit-id').value;
+    const skillData = {
+        name: String(formData.get('name') || '').trim(),
+        description: String(formData.get('description') || '').trim(),
+        instructions: String(formData.get('instructions') || '').trim(),
+        visibility: String(formData.get('visibility') || 'personal'),
+    };
+    if (skillId) {
+        skillData.expected_hash = elements.skillForm.querySelector('#skill-expected-hash').value;
+    } else {
+        skillData.source = String(formData.get('source') || 'authored');
+        skillData.publisher_claim = String(formData.get('publisher_claim') || '').trim() || null;
+        skillData.source_reference = String(formData.get('source_reference') || '').trim() || null;
+        skillData.external_install_confirmed = elements.skillForm.querySelector('#skill-external-confirmed').checked;
+    }
+
+    const submitButton = elements.skillForm.querySelector('#skill-form-submit');
+    submitButton.disabled = true;
+    try {
+        await apiRequest(skillId ? `/skills/${encodeURIComponent(skillId)}` : '/skills', {
+            method: skillId ? 'PUT' : 'POST',
+            body: JSON.stringify(skillData),
+        });
+        showNotice(elements.success, skillId
+            ? 'নতুন skill version draft হয়েছে; পুনরায় verify না করা পর্যন্ত এটি চলবে না।'
+            : 'Skill draft তৈরি হয়েছে; verify না করা পর্যন্ত এটি কোনো task-এ ব্যবহার হবে না।');
+        resetSkillForm();
+        await loadSkills();
+    } catch (error) {
+        showNotice(elements.error, error.message);
+    } finally {
+        submitButton.disabled = false;
+    }
+});
+
+elements.skillForm.querySelector('#skill-form-cancel').addEventListener('click', resetSkillForm);
+
+elements.skillDirectory.addEventListener('click', async (event) => {
+    const verifyButton = event.target.closest('[data-skill-verify]');
+    const enabledButton = event.target.closest('[data-skill-enabled]');
+    const editButton = event.target.closest('[data-skill-edit]');
+    const rollbackButton = event.target.closest('[data-skill-rollback]');
+    const evaluationButton = event.target.closest('[data-skill-evaluation]');
+    const target = verifyButton || enabledButton || editButton || rollbackButton || evaluationButton;
+    if (!target) {
+        return;
+    }
+
+    target.disabled = true;
+    try {
+        if (verifyButton) {
+            if (!window.confirm('এই hash-সহ বর্তমান skill version আপনি নিজে পর্যালোচনা করেছেন এবং enable করতে চান?')) {
+                return;
+            }
+            await apiRequest(`/skills/${encodeURIComponent(verifyButton.dataset.skillVerify)}/verify`, {
+                method: 'POST',
+                body: JSON.stringify({
+                    confirm: true,
+                    content_hash: verifyButton.dataset.skillHash,
+                }),
+            });
+        } else if (enabledButton) {
+            await apiRequest(`/skills/${encodeURIComponent(enabledButton.dataset.skillEnabled)}/enabled`, {
+                method: 'PUT',
+                body: JSON.stringify({ enabled: enabledButton.dataset.enabled === 'true' }),
+            });
+        } else if (editButton) {
+            const responseData = await apiRequest(`/skills/${encodeURIComponent(editButton.dataset.skillEdit)}`);
+            const skill = responseData.skill;
+            elements.skillForm.querySelector('#skill-edit-id').value = String(skill.id);
+            elements.skillForm.querySelector('#skill-expected-hash').value = skill.content_hash || '';
+            elements.skillForm.querySelector('#skill-name').value = skill.name;
+            elements.skillForm.querySelector('#skill-description').value = skill.description;
+            elements.skillForm.querySelector('#skill-instructions').value = skill.instructions || '';
+            elements.skillForm.querySelector('#skill-visibility').value = skill.visibility;
+            elements.skillForm.querySelector('#skill-form-heading').textContent = `${skill.name} · v${skill.version} সম্পাদনা`;
+            elements.skillForm.querySelector('#skill-form-submit').textContent = 'নতুন version draft';
+            elements.skillForm.querySelector('#skill-form-cancel').hidden = false;
+            elements.skillSource.disabled = true;
+            elements.externalSkillFields.hidden = true;
+            elements.skillForm.querySelector('#skill-form-status').textContent = 'সেভ করলে পুরোনো version history থাকবে; নতুন version আবার review করতে হবে।';
+            elements.skillForm.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            return;
+        } else if (rollbackButton) {
+            if (!window.confirm('নির্বাচিত পুরোনো version থেকে নতুন draft তৈরি করবেন? আবার review ও verify লাগবে।')) {
+                return;
+            }
+            await apiRequest(
+                `/skills/${encodeURIComponent(rollbackButton.dataset.skillRollback)}/rollback/${encodeURIComponent(rollbackButton.dataset.skillVersion)}`,
+                { method: 'POST', body: JSON.stringify({ confirm: true }) },
+            );
+        } else if (evaluationButton) {
+            await loadSkillEvaluation(evaluationButton.dataset.skillEvaluation);
+            return;
+        }
+
+        await loadSkills();
+    } catch (error) {
+        showNotice(elements.error, error.message);
+    } finally {
+        target.disabled = false;
+    }
+});
+
+elements.skillEvaluationPanel.addEventListener('submit', async (event) => {
+    const policyForm = event.target.closest('[data-skill-evaluation-policy]');
+    const caseForm = event.target.closest('[data-skill-test-case-form]');
+    if (!policyForm && !caseForm) {
+        return;
+    }
+
+    event.preventDefault();
+    const form = policyForm || caseForm;
+    const skillId = form.dataset.skillEvaluationPolicy || form.dataset.skillTestCaseForm;
+    const submitButton = form.querySelector('button[type="submit"]');
+    submitButton.disabled = true;
+    try {
+        if (policyForm) {
+            const formData = new FormData(policyForm);
+            await apiRequest(`/skills/${encodeURIComponent(skillId)}/evaluation-policy`, {
+                method: 'PUT',
+                body: JSON.stringify({
+                    auto_disable: formData.get('auto_disable') === 'on',
+                    minimum_score: String(formData.get('minimum_score') || '').trim() || null,
+                }),
+            });
+        } else {
+            const formData = new FormData(caseForm);
+            const testCaseId = String(formData.get('test_case_id') || '');
+            const criteria = String(formData.get('criteria') || '')
+                .split('\n')
+                .map((criterion) => criterion.trim())
+                .filter(Boolean);
+            const data = {
+                name: String(formData.get('name') || '').trim(),
+                prompt: String(formData.get('prompt') || '').trim(),
+                reference_answer: String(formData.get('reference_answer') || '').trim() || null,
+                criteria,
+            };
+            await apiRequest(testCaseId
+                ? `/skills/${encodeURIComponent(skillId)}/test-cases/${encodeURIComponent(testCaseId)}`
+                : `/skills/${encodeURIComponent(skillId)}/test-cases`, {
+                method: testCaseId ? 'PUT' : 'POST',
+                body: JSON.stringify(data),
+            });
+        }
+        await loadSkillEvaluation(skillId);
+        showNotice(elements.success, policyForm ? 'Evaluation policy saved.' : 'Evaluation test case saved.');
+    } catch (error) {
+        showNotice(elements.error, error.message);
+    } finally {
+        submitButton.disabled = false;
+    }
+});
+
+elements.skillEvaluationPanel.addEventListener('click', async (event) => {
+    const closeButton = event.target.closest('[data-skill-evaluation-close]');
+    const runButton = event.target.closest('[data-skill-run-evaluation]');
+    const editButton = event.target.closest('[data-skill-test-case-edit]');
+    const deleteButton = event.target.closest('[data-skill-test-case-delete]');
+    const cancelButton = event.target.closest('[data-skill-test-case-cancel]');
+    if (closeButton) {
+        elements.skillEvaluationPanel.hidden = true;
+        return;
+    }
+    if (cancelButton) {
+        const form = elements.skillEvaluationPanel.querySelector('[data-skill-test-case-form]');
+        form.reset();
+        form.querySelector('[name="test_case_id"]').value = '';
+        form.querySelector('[data-skill-test-case-heading]').textContent = 'Add evaluation test case';
+        cancelButton.hidden = true;
+        return;
+    }
+    const target = runButton || editButton || deleteButton;
+    if (!target) {
+        return;
+    }
+
+    target.disabled = true;
+    try {
+        if (runButton) {
+            if (!window.confirm('Run test cases with the approved Research model? This contacts the configured provider, uses tokens, and stores scores but not model outputs.')) {
+                return;
+            }
+            await apiRequest(`/skills/${encodeURIComponent(runButton.dataset.skillRunEvaluation)}/evaluate`, {
+                method: 'POST',
+                body: JSON.stringify({ confirm: true }),
+            });
+            await loadSkills();
+            await loadSkillEvaluation(runButton.dataset.skillRunEvaluation);
+            showNotice(elements.success, 'Skill evaluation completed.');
+        } else if (editButton) {
+            const skillId = elements.skillEvaluationPanel.querySelector('[data-skill-evaluation-policy]').dataset.skillEvaluationPolicy;
+            const responseData = await apiRequest(`/skills/${encodeURIComponent(skillId)}/evaluations`);
+            const testCase = responseData.evaluation.test_cases.find((item) => String(item.id) === editButton.dataset.skillTestCaseEdit);
+            const form = elements.skillEvaluationPanel.querySelector('[data-skill-test-case-form]');
+            form.querySelector('[name="test_case_id"]').value = String(testCase.id);
+            form.querySelector('[name="name"]').value = testCase.name;
+            form.querySelector('[name="prompt"]').value = testCase.prompt;
+            form.querySelector('[name="reference_answer"]').value = testCase.reference_answer || '';
+            form.querySelector('[name="criteria"]').value = (testCase.criteria || []).join('\n');
+            form.querySelector('[data-skill-test-case-heading]').textContent = 'Edit evaluation test case';
+            form.querySelector('[data-skill-test-case-cancel]').hidden = false;
+            form.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        } else {
+            const skillId = elements.skillEvaluationPanel.querySelector('[data-skill-evaluation-policy]').dataset.skillEvaluationPolicy;
+            if (!window.confirm('Delete this evaluation test case? Existing evaluation run scores will remain.')) {
+                return;
+            }
+            await apiRequest(`/skills/${encodeURIComponent(skillId)}/test-cases/${encodeURIComponent(deleteButton.dataset.skillTestCaseDelete)}`, {
+                method: 'DELETE',
+            });
+            await loadSkillEvaluation(skillId);
+        }
+    } catch (error) {
+        showNotice(elements.error, error.message);
+    } finally {
+        target.disabled = false;
+    }
+});
 
 function renderTaskList(tasks) {
     if (tasks.length === 0) {
@@ -763,7 +1231,7 @@ function renderTaskDetail(task) {
     const answer = task.result?.answer;
     const failure = task.error_message;
     const finalResult = answer
-        ? `<div class="result-card"><strong>চূড়ান্ত উত্তর</strong><p>${escapeHtml(answer)}</p></div>`
+        ? `<div class="result-card"><strong>চূড়ান্ত উত্তর</strong><p>${escapeHtml(answer)}</p>${assistantSettings?.voice_output_enabled ? `<button class="button button-quiet button-small" type="button" data-speak-task-answer>উত্তর শুনুন</button>` : ''}</div>`
         : '';
     const failureMessage = failure
         ? `<div class="notice notice-error">${escapeHtml(failure)}</div>`
@@ -823,6 +1291,7 @@ function renderTaskDetail(task) {
         ? `<section class="panel" data-replay-share-panel><strong>সক্রিয় replay link</strong><div data-replay-share-list>${activeShareRows}</div></section>`
         : '';
     const taskMode = task.mode === 'live' ? 'live' : 'sandbox';
+    const graphPanel = renderAgentGraph(task.run_graph);
     const modeActions = [
         `<button class="button button-quiet button-small" type="button" data-replay-task-id="${escapeHtml(task.id)}">Sandbox replay (read only)</button>`,
         `<button class="button button-quiet button-small" type="button" data-share-task-replay-id="${escapeHtml(task.id)}">Read-only share link তৈরি</button>`,
@@ -831,6 +1300,11 @@ function renderTaskDetail(task) {
     if (taskMode === 'sandbox' && task.status === 2) {
         modeActions.unshift(
             `<button class="button button-small" type="button" data-live-transition-task-id="${escapeHtml(task.id)}">Live mode-এর safety gate যাচাই</button>`,
+        );
+    }
+    if (task.status === 2 && task.result?.criteria_passed !== false) {
+        modeActions.unshift(
+            `<button class="button button-quiet button-small" type="button" data-skill-draft-task-id="${escapeHtml(task.id)}">এই সফল কাজ থেকে Skill draft সাজান</button>`,
         );
     }
     if ([0, 1].includes(task.status)) {
@@ -850,6 +1324,7 @@ function renderTaskDetail(task) {
         </div>
         <div class="task-mode-actions">${modeActions.join('')}</div>
         ${checkInSummary}
+        ${graphPanel}
         <div class="agent-timeline">${renderAgentRuns(task.agent_runs || [], task.routing, task.id)}</div>
         ${routingDetails ? `<section class="routing-reasons"><strong>কেন এই model</strong>${routingDetails}</section>` : ''}
         ${sharePanel}
@@ -861,6 +1336,185 @@ function renderTaskDetail(task) {
         ${finalResult}
         ${failureMessage}
     `;
+}
+
+function renderAgentGraph(graph) {
+    if (!graph || !Array.isArray(graph.nodes) || !Array.isArray(graph.events)) {
+        return '';
+    }
+
+    const connected = isTaskRealtimeConnected();
+    const connectionStatus = connected
+        ? '<span class="graph-connection is-connected">Live updates connected</span>'
+        : '<span class="graph-connection is-disconnected">Realtime disconnected · showing latest saved event state</span>';
+    const edges = new Set((graph.edges || []).map((edge) => `${edge.from}:${edge.to}`));
+    const eventsByRun = new Map();
+    graph.events.forEach((event) => {
+        if (event.agent_run_id === null) {
+            return;
+        }
+        const key = String(event.agent_run_id);
+        eventsByRun.set(key, [...(eventsByRun.get(key) || []), event]);
+    });
+    const nodes = graph.nodes.map((node, index) => {
+        const nodeEvents = eventsByRun.get(String(node.id)) || [];
+        const toolList = node.tools?.length ? node.tools.join(', ') : 'None recorded';
+        const usage = node.token_usage?.total_tokens
+            ? `${Number(node.token_usage.total_tokens).toLocaleString()} tokens`
+            : 'No token usage recorded';
+        const cost = (node.cost_by_currency || [])
+            .map((item) => `${item.amount} ${item.currency}`)
+            .join(', ') || 'No priced calls recorded';
+        const eventItems = nodeEvents.map((event) => `
+            <li><span>${escapeHtml(event.event_type)}</span><time>${escapeHtml(formatDate(event.occurred_at))}</time></li>
+        `).join('');
+        const edge = graph.nodes[index + 1] && edges.has(`${node.id}:${graph.nodes[index + 1].id}`)
+            ? '<div class="agent-graph-edge" aria-label="Agent handoff">↓ handoff</div>'
+            : '';
+
+        return `
+            <article class="agent-graph-node status-${escapeHtml(node.status)}">
+                <div class="agent-graph-node-heading">
+                    <strong>${escapeHtml(node.agent)}</strong>
+                    <span class="mode-badge ${node.mode === 'live' ? 'mode-badge-live' : ''}">${node.mode === 'live' ? 'LIVE' : 'SANDBOX'}</span>
+                    <span class="status-chip status-${escapeHtml(node.status)}">${escapeHtml(statusLabel(node.status))}</span>
+                </div>
+                <details>
+                    <summary>Operational details</summary>
+                    <dl>
+                        <dt>Provider / model</dt><dd>${escapeHtml([node.provider, node.model].filter(Boolean).join(' / ') || 'Not recorded')}</dd>
+                        <dt>Tools</dt><dd>${escapeHtml(toolList)}</dd>
+                        <dt>Token usage</dt><dd>${escapeHtml(usage)}</dd>
+                        <dt>Estimated cost</dt><dd>${escapeHtml(cost)}</dd>
+                        <dt>Started</dt><dd>${escapeHtml(formatDate(node.started_at))}</dd>
+                        <dt>Elapsed</dt><dd>${node.duration_ms === null ? 'Not recorded' : `${(Number(node.duration_ms) / 1000).toFixed(1)} sec`}</dd>
+                        <dt>Historical ETA</dt><dd>${formatAgentEta(node)}</dd>
+                        ${node.routing_reason ? `<dt>Routing reason</dt><dd>${escapeHtml(node.routing_reason)}</dd>` : ''}
+                    </dl>
+                    <strong>Recorded events (${nodeEvents.length})</strong>
+                    <ul class="agent-graph-events">${eventItems || '<li>No run events recorded.</li>'}</ul>
+                </details>
+            </article>
+            ${edge}
+        `;
+    }).join('');
+    const officeNodes = graph.nodes.map((node) => {
+        const nodeEvents = eventsByRun.get(String(node.id)) || [];
+        const lastEvent = nodeEvents[nodeEvents.length - 1] || null;
+        const speech = agentOfficeSpeech(lastEvent, graph.nodes);
+        const officeState = lastEvent?.status || 'idle';
+        const officeStateLabel = ({
+            running: 'Working',
+            completed: 'Done',
+            failed: 'Needs attention',
+            waiting: 'Waiting for approval',
+            recorded: 'Event recorded',
+            idle: 'No event yet',
+        })[officeState] || 'Event recorded';
+        const character = ({
+            Orchestrator: '🧑‍✈️',
+            Research: '🔎',
+            Writer: '✍️',
+            Reviewer: '🛡️',
+        })[node.agent] || '🤖';
+
+        return `
+            <article class="office-agent office-state-${escapeHtml(officeState)}">
+                <div class="office-agent-top">
+                    <span class="office-character" aria-hidden="true">${character}</span>
+                    <span class="mode-badge ${node.mode === 'live' ? 'mode-badge-live' : ''}">${node.mode === 'live' ? 'LIVE' : 'SANDBOX'}</span>
+                </div>
+                <div class="office-speech" role="status">${escapeHtml(speech)}</div>
+                <strong>${escapeHtml(node.agent)}</strong>
+                <span class="office-state-label">${escapeHtml(officeStateLabel)}</span>
+                <p class="office-eta">${escapeHtml(formatAgentEta(node))}</p>
+            </article>
+        `;
+    }).join('');
+    const emptyGraph = nodes || graph.events.length > 0
+        ? ''
+        : '<div class="empty-state">No agent runs or Flight Recorder events have been recorded for this task.</div>';
+
+    return `
+        <section class="agent-graph" aria-label="Live agent graph" data-graph-source="${escapeHtml(graph.source || 'run_events')}">
+            <div class="agent-graph-header">
+                <div><strong>Agent Office &amp; Live Visual View</strong><small>Office characters, graph, and replay use the same Flight Recorder events; replay is not stored video.</small></div>
+                ${connectionStatus}
+            </div>
+            <div class="agent-visualization-tabs" role="group" aria-label="Agent visualization">
+                <button class="button button-quiet button-small" type="button" data-agent-visualization-toggle="office" aria-pressed="false">Agent Office</button>
+                <button class="button button-quiet button-small" type="button" data-agent-visualization-toggle="graph" aria-pressed="true">Live graph</button>
+            </div>
+            <div class="agent-visualization-panel" data-agent-visualization="office" hidden>
+                ${officeNodes
+        ? `<div class="agent-office">${officeNodes}</div>`
+        : '<div class="empty-state">No agent runs are available to show in the office.</div>'}
+            </div>
+            <div class="agent-visualization-panel" data-agent-visualization="graph">
+                ${nodes ? `<div class="agent-graph-nodes">${nodes}</div>` : emptyGraph}
+            </div>
+        </section>
+    `;
+}
+
+function agentOfficeSpeech(event, nodes) {
+    if (!event) {
+        return 'No activity has been recorded yet.';
+    }
+
+    switch (event.event_type) {
+        case 'agent.started':
+            return 'Run started.';
+        case 'agent.llm_call':
+            return 'Model call recorded.';
+        case 'tool.started':
+            return event.metadata?.tool_name
+                ? `Tool started: ${event.metadata.tool_name}.`
+                : 'Tool start recorded.';
+        case 'tool.completed':
+            return 'Tool completed.';
+        case 'tool.failed':
+            return 'Tool failed.';
+        case 'agent.handoff': {
+            const recipient = nodes.find((candidate) => String(candidate.id) === String(event.handoff_to));
+            return recipient ? `Handing off to ${recipient.agent}.` : 'Agent handoff recorded.';
+        }
+        case 'agent.completed':
+            return 'Run completed.';
+        case 'agent.failed':
+            return 'Run failed.';
+        case 'agent.waiting_for_approval':
+        case 'tool.approval_required':
+            return 'Waiting for owner approval.';
+        default:
+            return `${event.event_type} event recorded.`;
+    }
+}
+
+function formatAgentEta(node) {
+    if ([2, 3, 4].includes(Number(node.status))) {
+        return Number(node.status) === 2 ? 'Run completed; no ETA needed.' : 'No ETA while the run is stopped.';
+    }
+
+    const estimate = node.eta_estimate;
+    if (!estimate || !Number(estimate.sample_size) || !Number.isFinite(estimate.remaining_p50_ms) || !Number.isFinite(estimate.remaining_p90_ms)) {
+        return 'ETA cannot be estimated from run history.';
+    }
+
+    const formatRangeEnd = (milliseconds) => {
+        const seconds = Math.ceil(Number(milliseconds) / 1000);
+        if (seconds < 60) {
+            return `${seconds} sec`;
+        }
+        const minutes = Math.ceil(seconds / 60);
+        if (minutes < 60) {
+            return `${minutes} min`;
+        }
+
+        return `${Math.ceil(minutes / 60)} hr`;
+    };
+
+    return `Estimated remaining: ${formatRangeEnd(estimate.remaining_p50_ms)}–${formatRangeEnd(estimate.remaining_p90_ms)} (based on ${estimate.sample_size} completed runs).`;
 }
 
 async function loadSandboxReplay(taskId) {
@@ -1160,7 +1814,7 @@ function renderBrainSelectors(overrides = {}) {
 
     const selectedBrains = brainSettings?.agent_brains || {};
     const agentModelSettings = brainSettings?.agent_models || {};
-    elements.agentBrainGrid.innerHTML = Object.entries(AGENT_LABELS).map(([agentName, label]) => {
+    elements.agentBrainGrid.innerHTML = Object.entries(BRAIN_AGENT_LABELS).map(([agentName, label]) => {
         const brainMode = overrides.agentModes?.[agentName] || selectedBrains[agentName] || 'auto';
         const configuredModel = agentModelSettings[agentName];
         const currentModelKey = overrides.agentModels?.[agentName] || (configuredModel
@@ -1192,7 +1846,9 @@ function renderBrainSelectors(overrides = {}) {
 }
 
 function renderProviderKeys() {
-    const agentKeyGroups = Object.entries(AGENT_LABELS).map(([agentName, label]) => `
+    const agentKeyGroups = credentialAgents.map((agentName) => {
+        const label = agentLabel(agentName);
+        return `
         <section class="provider-agent-key-group" data-agent-key-card="${escapeHtml(agentName)}">
             <h4>${escapeHtml(label)} · ${escapeHtml(agentName)}</h4>
             <div class="provider-key-grid">${Object.values(brainCatalog).map((provider) => {
@@ -1219,7 +1875,8 @@ function renderProviderKeys() {
                 `;
             }).join('')}</div>
         </section>
-    `).join('');
+    `;
+    }).join('');
     const legacyProviderIds = Object.keys(brainLegacyKeys || {});
     const legacyNotice = legacyProviderIds.length
         ? `<div class="notice notice-warning">আগের account-level credential আর কোনো agent ব্যবহার করে না. পুরোনো credential মুছে দিন: ${legacyProviderIds.map((providerId) => `
@@ -1232,7 +1889,7 @@ function renderProviderKeys() {
 function renderAgentDirectory() {
     const brains = brainSettings?.agent_brains || {};
     const models = brainSettings?.agent_models || {};
-    elements.agentDirectory.innerHTML = Object.entries(AGENT_LABELS).map(([agentName, label]) => {
+    elements.agentDirectory.innerHTML = Object.entries(BRAIN_AGENT_LABELS).map(([agentName, label]) => {
         const brainMode = brains[agentName] || 'auto';
         const model = models[agentName];
         const modelText = model
@@ -1319,6 +1976,7 @@ async function loadBrainSettings() {
     brainCatalog = responseData.catalog || {};
     brainKeys = responseData.keys || {};
     brainLegacyKeys = responseData.legacy_keys || {};
+    credentialAgents = responseData.agents?.length ? responseData.agents : Object.keys(BRAIN_AGENT_LABELS);
     for (const model of brainSettings?.approved_models || []) {
         const provider = brainCatalog[model.provider];
         if (provider && !provider.models[model.model]) {
@@ -2313,6 +2971,83 @@ elements.apiIntegrationList.addEventListener('click', async (event) => {
     }
 });
 
+elements.assistantSettingsForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    clearNotices();
+    const formData = new FormData(elements.assistantSettingsForm);
+    try {
+        await apiRequest('/assistant/settings', {
+            method: 'PUT',
+            body: JSON.stringify({
+                persona: String(formData.get('persona') || 'friendly'),
+                custom_persona: String(formData.get('custom_persona') || '').trim() || null,
+                voice_input_enabled: elements.assistantVoiceInput.checked,
+                voice_output_enabled: elements.assistantVoiceOutput.checked,
+                voice_language: elements.assistantVoiceLanguage.value,
+                vision_enabled: elements.assistantVisionEnabled.checked,
+                proactive_enabled: elements.assistantProactiveEnabled.checked,
+                proactive_max_suggestions: Number(elements.assistantProactiveLimit.value),
+                proactive_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+                smart_home_enabled: false,
+            }),
+        });
+        await loadAssistantSettings();
+        showNotice(elements.success, 'Assistant preferences সংরক্ষণ হয়েছে। Smart-home actions এখনো বন্ধ।');
+    } catch (error) {
+        showNotice(elements.error, error.message);
+    }
+});
+
+elements.assistantPersona.addEventListener('change', () => {
+    elements.assistantCustomPersona.disabled = elements.assistantPersona.value !== 'custom';
+});
+
+elements.proactiveBriefingButton.addEventListener('click', async () => {
+    elements.proactiveBriefingButton.disabled = true;
+    elements.proactiveBriefingStatus.textContent = 'আপনার দৈনিক briefing তৈরি হচ্ছে…';
+    try {
+        const response = await apiRequest('/assistant/proactive/briefing');
+        elements.proactiveBriefingList.replaceChildren();
+        if (!response.enabled) {
+            elements.proactiveBriefingStatus.textContent = response.message;
+            elements.proactiveBriefing.hidden = true;
+            return;
+        }
+
+        const suggestions = Array.isArray(response.suggestions) ? response.suggestions : [];
+        elements.proactiveBriefingStatus.textContent = suggestions.length
+            ? `${response.date} · ${response.timezone} · সর্বোচ্চ ${response.suggestion_limit}টি প্রস্তাব`
+            : 'আজ কোনো অসমাপ্ত কাজ নেই।';
+        elements.proactiveBriefingList.innerHTML = suggestions.map((suggestion) => `
+            <article class="proactive-suggestion">
+                <div>
+                    <strong>${escapeHtml(suggestion.title)}</strong>
+                    <span>${escapeHtml(suggestion.reason)} · ${suggestion.status === 'in_progress' ? 'চলছে' : 'অপেক্ষমাণ'}</span>
+                </div>
+                <button class="button button-quiet button-small" type="button" data-open-proactive-task="${encodeURIComponent(suggestion.task_id)}">কাজ খুলুন</button>
+            </article>
+        `).join('');
+    } catch (error) {
+        elements.proactiveBriefingStatus.textContent = 'Briefing লোড করা যায়নি।';
+        showNotice(elements.error, error.message);
+    } finally {
+        elements.proactiveBriefingButton.disabled = false;
+    }
+});
+
+elements.proactiveBriefingList.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-open-proactive-task]');
+    if (!button) {
+        return;
+    }
+
+    try {
+        await loadTask(decodeURIComponent(button.dataset.openProactiveTask));
+    } catch (error) {
+        showNotice(elements.error, error.message);
+    }
+});
+
 elements.brainSettingsForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     clearNotices();
@@ -2491,6 +3226,14 @@ elements.authForm.addEventListener('submit', async (event) => {
 
 async function clearSession() {
     apiToken = '';
+    stopAssistantCamera();
+    window.speechSynthesis?.cancel();
+    assistantSettings = null;
+    visionImageFile = null;
+    if (visionPreviewUrl) {
+        URL.revokeObjectURL(visionPreviewUrl);
+        visionPreviewUrl = null;
+    }
     taskEcho?.disconnect();
     taskEcho = null;
     canManageKnowledgeSettings = false;
@@ -2511,6 +3254,10 @@ async function clearSession() {
     systemKillSwitchEnabled = false;
     selectedTaskId = null;
     liveResponseDraft = null;
+    pendingTaskConfirmation = null;
+    pendingTaskScheduleConfirmation = null;
+    elements.taskEstimate.hidden = true;
+    elements.taskScheduleEstimate.hidden = true;
     sessionStorage.removeItem(TOKEN_STORAGE_KEY);
     window.clearTimeout(refreshTimer);
     window.clearTimeout(realtimeRefreshTimer);
@@ -2557,21 +3304,64 @@ elements.taskScheduleForm.addEventListener('submit', async (event) => {
     const submitButton = elements.taskScheduleForm.querySelector('button[type="submit"]');
     const formData = new FormData(elements.taskScheduleForm);
     const cadence = String(formData.get('cadence') || 'once');
+    const scheduleData = {
+        title: String(formData.get('title') || '').trim(),
+        prompt: String(formData.get('prompt') || '').trim(),
+        cadence,
+        starts_at: formData.get('starts_at'),
+        timezone: formData.get('timezone'),
+        expires_at: cadence === 'once' ? null : formData.get('expires_at'),
+    };
     submitButton.disabled = true;
 
     try {
+        const isCurrentReview = pendingTaskScheduleConfirmation
+            && JSON.stringify(pendingTaskScheduleConfirmation.scheduleData) === JSON.stringify(scheduleData)
+            && pendingTaskScheduleConfirmation.expiresAt > Date.now();
+        if (!isCurrentReview) {
+            const estimateResponse = await apiRequest('/tasks/estimate', {
+                method: 'POST',
+                body: JSON.stringify({ prompt: scheduleData.prompt }),
+            });
+            if (estimateResponse.task_brief_review?.required) {
+                const brief = estimateResponse.task_brief;
+                elements.taskScheduleEstimate.textContent = [
+                    `TaskBrief: ${brief.language} / ${brief.intent}; risk ${brief.risk.level}; complexity ${brief.complexity.level}`,
+                    ...(brief.ambiguity.questions || []),
+                    ...(brief.success_criteria_suggestions || []),
+                    'এই নির্ধারিত কাজটি জটিল বা ঝুঁকিপূর্ণ। Schedule করার আগে TaskBrief দেখে অনুমোদন করুন।',
+                ].join('\n');
+                elements.taskScheduleEstimate.hidden = false;
+                pendingTaskScheduleConfirmation = {
+                    scheduleData,
+                    token: estimateResponse.task_brief_review.token,
+                    expiresAt: Date.now()
+                        + estimateResponse.task_brief_review.expires_in_minutes * 60 * 1000,
+                };
+                submitButton.textContent = 'TaskBrief দেখে schedule অনুমোদন করুন';
+                return;
+            }
+            pendingTaskScheduleConfirmation = {
+                scheduleData,
+                token: null,
+                expiresAt: Number.POSITIVE_INFINITY,
+            };
+        }
+
+        const requestData = {
+            ...scheduleData,
+            ...(pendingTaskScheduleConfirmation?.token
+                ? { task_brief_review_token: pendingTaskScheduleConfirmation.token }
+                : {}),
+        };
         await apiRequest('/task-schedules', {
             method: 'POST',
-            body: JSON.stringify({
-                title: String(formData.get('title') || '').trim(),
-                prompt: String(formData.get('prompt') || '').trim(),
-                cadence,
-                starts_at: formData.get('starts_at'),
-                timezone: formData.get('timezone'),
-                expires_at: cadence === 'once' ? null : formData.get('expires_at'),
-            }),
+            body: JSON.stringify(requestData),
         });
+        pendingTaskScheduleConfirmation = null;
+        elements.taskScheduleEstimate.hidden = true;
         elements.taskScheduleForm.reset();
+        submitButton.textContent = 'Schedule সংরক্ষণ';
         elements.scheduleTimezone.value = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
         elements.scheduleExpiryField.hidden = true;
         elements.scheduleExpiresAt.required = false;
@@ -2603,6 +3393,105 @@ elements.taskScheduleList.addEventListener('click', async (event) => {
     }
 });
 
+elements.voiceInputButton.addEventListener('click', () => {
+    const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!Recognition || !assistantSettings?.voice_input_enabled) {
+        return;
+    }
+
+    const recognition = new Recognition();
+    recognition.lang = assistantSettings.voice_language || 'bn-BD';
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.onresult = (event) => {
+        const transcript = event.results?.[0]?.[0]?.transcript?.trim();
+        if (transcript) {
+            const promptField = elements.taskForm.querySelector('#task-prompt');
+            promptField.value = `${promptField.value.trim()}${promptField.value.trim() ? ' ' : ''}${transcript}`.slice(0, 20000);
+            promptField.dispatchEvent(new Event('input', { bubbles: true }));
+            elements.voiceInputStatus.textContent = 'কণ্ঠের লেখা যোগ হয়েছে। Task পাঠানোর আগে দেখে নিন।';
+        }
+    };
+    recognition.onerror = (event) => {
+        elements.voiceInputStatus.textContent = `Speech recognition ব্যর্থ: ${event.error}.`;
+    };
+    recognition.onend = () => {
+        elements.voiceInputButton.disabled = !assistantSettings?.voice_input_enabled;
+    };
+    elements.voiceInputButton.disabled = true;
+    elements.voiceInputStatus.textContent = 'শুনছি…';
+    try {
+        recognition.start();
+    } catch (error) {
+        elements.voiceInputButton.disabled = false;
+        elements.voiceInputStatus.textContent = `Speech recognition শুরু হয়নি: ${error.message}`;
+    }
+});
+
+elements.cameraStartButton.addEventListener('click', async () => {
+    if (!assistantSettings?.vision_enabled || !navigator.mediaDevices?.getUserMedia) {
+        return;
+    }
+
+    try {
+        cameraStream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: { ideal: 'environment' } },
+            audio: false,
+        });
+        elements.cameraPreview.srcObject = cameraStream;
+        elements.cameraPreview.hidden = false;
+        elements.cameraStartButton.hidden = true;
+        elements.cameraCaptureButton.hidden = false;
+        elements.cameraCaptureButton.disabled = false;
+        elements.cameraStopButton.hidden = false;
+        await elements.cameraPreview.play();
+        elements.cameraStatus.textContent = 'Camera সক্রিয়। ছবি তুলতে click করুন; অনুমতি না দিলে কিছু upload হবে না।';
+    } catch (error) {
+        elements.cameraStatus.textContent = `Camera চালু হয়নি: ${error.message}`;
+    }
+});
+
+elements.cameraCaptureButton.addEventListener('click', async () => {
+    const video = elements.cameraPreview;
+    if (!cameraStream || video.videoWidth < 1 || video.videoHeight < 1) {
+        showNotice(elements.error, 'Camera এখনো প্রস্তুত নয়।');
+        return;
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const context = canvas.getContext('2d');
+    if (!context) {
+        showNotice(elements.error, 'Camera frame তৈরি করা যায়নি।');
+        return;
+    }
+    context.drawImage(video, 0, 0);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.85));
+    if (!blob || blob.size > 3 * 1024 * 1024) {
+        showNotice(elements.error, 'ছবিটি ৩ MB সীমার চেয়ে বড়। কাছ থেকে বা কম resolution-এ আবার তুলুন।');
+        return;
+    }
+
+    visionImageFile = new File([blob], 'camera-capture.jpg', { type: 'image/jpeg' });
+    if (visionPreviewUrl) {
+        URL.revokeObjectURL(visionPreviewUrl);
+    }
+    visionPreviewUrl = URL.createObjectURL(blob);
+    elements.cameraCapturedImage.src = visionPreviewUrl;
+    elements.cameraCapturedImage.hidden = false;
+    elements.visionConfirmation.checked = false;
+    elements.visionConfirmationLabel.hidden = false;
+    elements.cameraStatus.textContent = 'ছবি তোলা হয়েছে। পাঠানোর আগে consent checkbox দিন; task estimate-এ image cost নেই।';
+    pendingTaskConfirmation = null;
+    stopAssistantCamera();
+});
+
+elements.cameraStopButton.addEventListener('click', () => {
+    stopAssistantCamera();
+    elements.cameraStatus.textContent = 'Camera বন্ধ করা হয়েছে।';
+});
+
 elements.taskForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     clearNotices();
@@ -2624,6 +3513,7 @@ elements.taskForm.addEventListener('submit', async (event) => {
         max_cost: String(formData.get('max_cost') || '').trim() === ''
             ? null
             : Number(formData.get('max_cost')),
+        vision_image_attached: Boolean(visionImageFile),
     };
     submitButton.disabled = true;
 
@@ -2635,7 +3525,10 @@ elements.taskForm.addEventListener('submit', async (event) => {
             && pendingTaskConfirmation.agent_pack === taskData.agent_pack
             && JSON.stringify(pendingTaskConfirmation.knowledge_document_ids) === JSON.stringify(taskData.knowledge_document_ids)
             && JSON.stringify(pendingTaskConfirmation.memory_ids) === JSON.stringify(taskData.memory_ids)
-            && pendingTaskConfirmation.max_cost === taskData.max_cost;
+            && pendingTaskConfirmation.max_cost === taskData.max_cost
+            && pendingTaskConfirmation.vision_image_attached === taskData.vision_image_attached
+            && (!pendingTaskConfirmation.task_brief_review_token
+                || pendingTaskConfirmation.task_brief_review_expires_at > Date.now());
         if (!isCurrentEstimateConfirmed) {
             const estimateResponse = await apiRequest('/tasks/estimate', {
                 method: 'POST',
@@ -2645,6 +3538,7 @@ elements.taskForm.addEventListener('submit', async (event) => {
                     agent_pack: taskData.agent_pack,
                     knowledge_document_ids: taskData.knowledge_document_ids,
                     memory_ids: taskData.memory_ids,
+                    vision_image_attached: taskData.vision_image_attached,
                 }),
             });
             renderTaskEstimate(estimateResponse);
@@ -2653,26 +3547,64 @@ elements.taskForm.addEventListener('submit', async (event) => {
                 : {
                     ...taskData,
                     task_brief: estimateResponse.task_brief,
+                    task_brief_review_token: estimateResponse.task_brief_review?.token || null,
+                    task_brief_review_expires_at: Date.now()
+                        + (estimateResponse.task_brief_review?.expires_in_minutes || 0) * 60 * 1000,
                     knowledge_context_token: estimateResponse.knowledge_preview?.token || null,
                     memory_context_hash: estimateResponse.memory_preview?.hash || null,
                 };
             submitButton.innerHTML = estimateResponse.cost_estimate.can_complete === false
                 ? 'সীমার বাইরে — prompt ছোট করুন'
-                : 'অনুমান দেখে শুরু করুন <span aria-hidden="true">→</span>';
+                : estimateResponse.task_brief_review?.required
+                    ? 'TaskBrief দেখে অনুমোদন করে শুরু করুন <span aria-hidden="true">→</span>'
+                    : 'অনুমান দেখে শুরু করুন <span aria-hidden="true">→</span>';
             return;
         }
 
         taskData.knowledge_context_token = pendingTaskConfirmation.knowledge_context_token;
         taskData.memory_context_hash = pendingTaskConfirmation.memory_context_hash;
+        if (pendingTaskConfirmation.task_brief_review_token) {
+            taskData.task_brief_review_token = pendingTaskConfirmation.task_brief_review_token;
+        }
+        let submitBody = JSON.stringify(taskData);
+        if (visionImageFile) {
+            if (!assistantSettings?.vision_enabled || !elements.visionConfirmation.checked) {
+                throw new Error('ছবি পাঠাতে Camera vision চালু ও upload consent checkbox নির্বাচিত থাকতে হবে।');
+            }
+            if (!window.confirm('ছবিটি আপনার নির্বাচিত, approved vision-capable model-এ পাঠানো হবে এবং private task storage-এ সর্বোচ্চ ৩০ দিন থাকবে। এখন পাঠাবেন?')) {
+                return;
+            }
+
+            const multipart = new FormData();
+            Object.entries(taskData).forEach(([key, value]) => {
+                if (Array.isArray(value)) {
+                    value.forEach((item) => multipart.append(`${key}[]`, String(item)));
+                } else if (value !== null && value !== undefined) {
+                    multipart.append(key, String(value));
+                }
+            });
+            multipart.append('vision_confirmed', '1');
+            multipart.append('vision_image', visionImageFile, 'camera-capture.jpg');
+            submitBody = multipart;
+        }
         const responseData = await apiRequest('/tasks', {
             method: 'POST',
-            body: JSON.stringify(taskData),
+            body: submitBody,
         });
         pendingTaskConfirmation = null;
         elements.taskEstimate.hidden = true;
         elements.applyTaskCriteria.hidden = true;
         submitButton.innerHTML = 'কাজ জমা দিন <span aria-hidden="true">→</span>';
         elements.taskForm.reset();
+        visionImageFile = null;
+        if (visionPreviewUrl) {
+            URL.revokeObjectURL(visionPreviewUrl);
+            visionPreviewUrl = null;
+        }
+        elements.cameraCapturedImage.removeAttribute('src');
+        elements.cameraCapturedImage.hidden = true;
+        elements.visionConfirmationLabel.hidden = true;
+        elements.cameraStatus.textContent = 'ছবি task-এ সংযুক্ত হয়েছে; camera বন্ধ।';
         selectedTaskId = responseData.task.id;
         await loadTasks();
         showNotice(elements.success, 'কাজ জমা হয়েছে; agent-দের অগ্রগতি নিচে দেখা যাবে।');
@@ -2725,6 +3657,9 @@ function renderTaskEstimate(responseData) {
 
     const estimateLines = [
         `Task brief: ${responseData.task_brief?.language || 'unknown'} / ${responseData.task_brief?.intent || 'unknown'}; risk ${responseData.task_brief?.risk?.level || 'unknown'}; complexity ${responseData.task_brief?.complexity?.level || 'unknown'}`,
+        responseData.task_brief_review?.required
+            ? 'এই কাজটি ঝুঁকিপূর্ণ বা জটিল: চালানোর আগে এই TaskBrief দেখে অনুমোদন করুন।'
+            : '',
         responseData.task_brief?.ambiguity?.questions?.length
             ? `সম্ভাব্য clarification (সর্বোচ্চ ২টি): ${responseData.task_brief.ambiguity.questions.join(' | ')}`
             : '',
@@ -2801,6 +3736,59 @@ elements.taskList.addEventListener('click', async (event) => {
 });
 
 elements.taskDetail.addEventListener('click', async (event) => {
+    const skillDraftButton = event.target.closest('[data-skill-draft-task-id]');
+    if (skillDraftButton) {
+        skillDraftButton.disabled = true;
+        try {
+            const response = await apiRequest(`/skills/drafts/from-task/${encodeURIComponent(skillDraftButton.dataset.skillDraftTaskId)}`, {
+                method: 'POST',
+            });
+            resetSkillForm();
+            elements.skillForm.querySelector('[name="name"]').value = response.draft.name;
+            elements.skillForm.querySelector('[name="description"]').value = response.draft.description;
+            elements.skillForm.querySelector('[name="instructions"]').value = response.draft.instructions;
+            elements.skillForm.querySelector('[name="visibility"]').value = 'personal';
+            elements.skillForm.querySelector('[name="source"]').value = 'authored';
+            elements.skillForm.querySelector('#skill-form-status').textContent = 'এটি শুধু একটি draft suggestion—কিছু সংরক্ষণ হয়নি। ব্যক্তিগত তথ্য সরিয়ে সম্পাদনা করে আপনি নিজে Save করুন; skill নিষ্ক্রিয় থাকবে যতক্ষণ না owner verify করেন।';
+            switchView('skills');
+            elements.skillForm.querySelector('[name="name"]').focus();
+            showNotice(elements.success, 'Editable Skill draft তৈরি হয়েছে; এটি এখনো সংরক্ষিত বা সক্রিয় নয়।');
+        } catch (error) {
+            showNotice(elements.error, error.message);
+        } finally {
+            skillDraftButton.disabled = false;
+        }
+        return;
+    }
+
+    const speakAnswerButton = event.target.closest('[data-speak-task-answer]');
+    if (speakAnswerButton) {
+        const answerText = elements.taskDetail.querySelector('.result-card p')?.textContent || '';
+        if (!assistantSettings?.voice_output_enabled || !window.speechSynthesis || !answerText) {
+            showNotice(elements.error, 'Browser speech output এখন উপলব্ধ নয় বা Settings-এ বন্ধ।');
+            return;
+        }
+
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(answerText);
+        utterance.lang = assistantSettings.voice_language || 'bn-BD';
+        utterance.onerror = () => showNotice(elements.error, 'Browser speech output ব্যর্থ হয়েছে।');
+        window.speechSynthesis.speak(utterance);
+        return;
+    }
+
+    const visualizationButton = event.target.closest('[data-agent-visualization-toggle]');
+    if (visualizationButton) {
+        const selectedView = visualizationButton.dataset.agentVisualizationToggle;
+        elements.taskDetail.querySelectorAll('[data-agent-visualization-toggle]').forEach((button) => {
+            button.setAttribute('aria-pressed', String(button === visualizationButton));
+        });
+        elements.taskDetail.querySelectorAll('[data-agent-visualization]').forEach((panel) => {
+            panel.hidden = panel.dataset.agentVisualization !== selectedView;
+        });
+        return;
+    }
+
     const replayButton = event.target.closest('[data-replay-task-id]');
     const resumeButton = event.target.closest('[data-resume-agent-run-id]');
     const shareButton = event.target.closest('[data-share-task-replay-id]');
@@ -3212,6 +4200,37 @@ elements.adminRefresh.addEventListener('click', async () => {
         await loadPlatformAdmin();
     } catch (error) {
         showNotice(elements.error, error.message);
+    }
+});
+
+elements.adminAgentList.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-prompt-lint-agent]');
+    if (!button) {
+        return;
+    }
+
+    button.disabled = true;
+    elements.adminPromptLintResults.innerHTML = '<div class="empty-state">Prompt checks are running.</div>';
+    try {
+        const agentName = encodeURIComponent(button.dataset.promptLintAgent);
+        const version = encodeURIComponent(button.dataset.promptLintVersion);
+        const response = await apiRequest(`/admin/agent-specs/${agentName}/versions/${version}/lint`);
+        const lint = response.lint;
+        const findings = lint.findings || [];
+        elements.adminPromptLintResults.innerHTML = `
+            <article class="admin-alert">
+                <strong>${escapeHtml(lint.agent_name)} prompt v${escapeHtml(lint.version)} · ${findings.length} finding(s)</strong>
+                <span>Read-only advisory · ${escapeHtml(lint.prompt_characters)} characters · SHA-256 ${escapeHtml(lint.prompt_sha256)}</span>
+                ${findings.length ? findings.map((finding) => `
+                    <span><strong>${escapeHtml(finding.severity)} · ${escapeHtml(finding.rule)}</strong>${finding.line ? ` · line ${escapeHtml(finding.line)}` : ''}: ${escapeHtml(finding.message)}</span>
+                `).join('') : '<span>No configured checks found issues. This is not a safety certification.</span>'}
+            </article>
+        `;
+    } catch (error) {
+        showNotice(elements.error, error.message);
+        elements.adminPromptLintResults.innerHTML = '';
+    } finally {
+        button.disabled = false;
     }
 });
 

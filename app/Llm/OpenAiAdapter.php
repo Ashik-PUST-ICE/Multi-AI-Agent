@@ -18,7 +18,7 @@ class OpenAiAdapter extends AbstractHttpLlmProvider implements StreamingLlmProvi
 
         $request = [
             'model' => $model,
-            'messages' => $messages,
+            'messages' => $this->formatMessages($messages),
             'max_tokens' => $options['max_tokens'] ?? config('llm.max_tokens'),
         ];
         $temperature = $options['temperature'] ?? null;
@@ -51,7 +51,7 @@ class OpenAiAdapter extends AbstractHttpLlmProvider implements StreamingLlmProvi
         $model = $this->requireModel($options);
         $request = [
             'model' => $model,
-            'messages' => $messages,
+            'messages' => $this->formatMessages($messages),
             'max_tokens' => $options['max_tokens'] ?? config('llm.max_tokens'),
             'stream' => true,
         ];
@@ -120,6 +120,41 @@ class OpenAiAdapter extends AbstractHttpLlmProvider implements StreamingLlmProvi
             ]],
             'usage' => $usage,
         ]);
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $messages
+     * @return array<int, array<string, mixed>>
+     */
+    private function formatMessages(array $messages): array
+    {
+        return array_map(static function (array $message): array {
+            $images = $message['images'] ?? [];
+            if (! is_array($images) || $images === []) {
+                unset($message['images']);
+
+                return $message;
+            }
+
+            $content = [];
+            if (is_string($message['content'] ?? null) && $message['content'] !== '') {
+                $content[] = ['type' => 'text', 'text' => $message['content']];
+            }
+            foreach ($images as $image) {
+                if (! is_array($image)
+                    || ! is_string($image['mime_type'] ?? null)
+                    || ! is_string($image['data'] ?? null)) {
+                    throw new \InvalidArgumentException('A user image attachment has an invalid format.');
+                }
+
+                $content[] = [
+                    'type' => 'image_url',
+                    'image_url' => ['url' => 'data:'.$image['mime_type'].';base64,'.$image['data']],
+                ];
+            }
+
+            return ['role' => $message['role'] ?? 'user', 'content' => $content];
+        }, $messages);
     }
 
     /**

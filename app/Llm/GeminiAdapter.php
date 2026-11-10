@@ -187,6 +187,21 @@ final class GeminiAdapter extends AbstractHttpLlmProvider implements StreamingLl
             $parts[] = ['text' => $content];
         }
 
+        foreach ($message['images'] ?? [] as $image) {
+            if (! is_array($image)
+                || ! is_string($image['mime_type'] ?? null)
+                || ! is_string($image['data'] ?? null)) {
+                throw new InvalidArgumentException('A user image attachment has an invalid format.');
+            }
+
+            $parts[] = [
+                'inlineData' => [
+                    'mimeType' => $image['mime_type'],
+                    'data' => $image['data'],
+                ],
+            ];
+        }
+
         foreach ($message['tool_calls'] ?? [] as $toolCall) {
             $function = $toolCall['function'] ?? $toolCall;
             $rawArguments = $function['arguments'] ?? [];

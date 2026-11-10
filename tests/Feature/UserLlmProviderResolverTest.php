@@ -74,6 +74,46 @@ class UserLlmProviderResolverTest extends TestCase
         app(UserLlmProviderResolver::class)->selectedModel($user, 'Skeptic');
     }
 
+    public function test_model_routing_uses_valid_intake_complexity_as_advisory_metadata(): void
+    {
+        $user = User::factory()->create();
+        $providerId = ProviderCatalog::OPENAI;
+        $modelId = array_key_first(app(ProviderCatalog::class)->provider($providerId)['models']);
+        $user->llmSettings()->create([
+            'provider' => $providerId,
+            'model' => $modelId,
+            'approved_models' => [['provider' => $providerId, 'model' => $modelId]],
+            'agent_models' => [],
+        ]);
+        $resolver = app(UserLlmProviderResolver::class);
+
+        $complex = $resolver->selectedModel(
+            $user,
+            'Writer',
+            TASK_MODE_SANDBOX,
+            null,
+            false,
+            'Write a short summary.',
+            'complex',
+        );
+        $estimated = $resolver->selectedModel(
+            $user,
+            'Writer',
+            TASK_MODE_SANDBOX,
+            null,
+            false,
+            'Write a short summary.',
+            'untrusted-value',
+        );
+
+        $this->assertSame('complex', $complex['complexity']);
+        $this->assertSame('simple', $estimated['complexity']);
+        $this->assertContains(
+            ['provider' => $complex['provider'], 'model' => $complex['model']],
+            $user->llmSettings->approved_models,
+        );
+    }
+
     public function test_agent_uses_its_user_approved_model_and_saved_credentials(): void
     {
         $catalog = app(ProviderCatalog::class);
@@ -185,6 +225,7 @@ class UserLlmProviderResolverTest extends TestCase
             ],
         ]);
         $user->apiKeys()->create([
+            'agent_name' => 'Orchestrator',
             'provider' => $providerId,
             'api_key' => 'user-owned-test-key',
         ]);
@@ -256,6 +297,7 @@ class UserLlmProviderResolverTest extends TestCase
             ],
         ]);
         $user->apiKeys()->create([
+            'agent_name' => 'Orchestrator',
             'provider' => $providerId,
             'api_key' => 'user-owned-test-key',
         ]);

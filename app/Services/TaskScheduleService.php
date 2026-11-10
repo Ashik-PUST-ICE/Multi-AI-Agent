@@ -19,12 +19,25 @@ class TaskScheduleService
 
     private const LATE_RUN_GRACE_MINUTES = 15;
 
+    public function __construct(
+        private readonly IntakeAnalyzer $intakeAnalyzer,
+        private readonly TaskBriefReviewService $taskBriefReviewService,
+    ) {}
+
     /**
      * @param  array{title: string, prompt: string, cadence: string, starts_at: string, timezone: string, expires_at?: string|null}  $data
      * @return array<string, mixed>
      */
     public function create(User $user, array $data): array
     {
+        $taskBrief = $this->intakeAnalyzer->analyze($data['prompt']);
+        $requiresReview = $this->taskBriefReviewService->requiresReview($taskBrief);
+        $this->taskBriefReviewService->assertReviewed(
+            $user,
+            $data['prompt'],
+            $taskBrief,
+            $data['task_brief_review_token'] ?? null,
+        );
         $timezone = $data['timezone'];
         $start = CarbonImmutable::parse($data['starts_at'], $timezone)->setTimezone($timezone);
         $now = CarbonImmutable::now($timezone);
@@ -41,7 +54,7 @@ class TaskScheduleService
             }
         }
 
-        $schedule = DB::transaction(function () use ($user, $data, $start, $expiresAt, $timezone): TaskSchedule {
+        $schedule = DB::transaction(function () use ($user, $data, $start, $expiresAt, $timezone, $requiresReview): TaskSchedule {
             $owner = User::query()->lockForUpdate()->findOrFail($user->id);
             if ($owner->taskSchedules()->where('enabled', 1)->count() >= self::MAX_ACTIVE_SCHEDULES) {
                 throw new InvalidArgumentException('You can have at most 10 active task schedules.');
@@ -58,6 +71,7 @@ class TaskScheduleService
                 'next_run_at' => $start->utc(),
                 'expires_at' => $expiresAt?->utc(),
                 'enabled' => 1,
+                'task_brief_reviewed' => $requiresReview,
             ]);
         });
 
@@ -216,6 +230,7 @@ class TaskScheduleService
             'next_run_at' => $schedule->next_run_at?->toIso8601String(),
             'expires_at' => $schedule->expires_at?->toIso8601String(),
             'enabled' => $schedule->enabled === 1,
+            'task_brief_reviewed' => $schedule->task_brief_reviewed,
             'last_scheduled_at' => $schedule->last_scheduled_at?->toIso8601String(),
             'cancelled_at' => $schedule->cancelled_at?->toIso8601String(),
             'can_cancel' => $schedule->enabled === 1

@@ -15,6 +15,7 @@ use App\Tenancy\TenantContext;
 use App\Tools\ExecutionHaltedException;
 use App\Tools\ToolApprovalRequiredException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use RuntimeException;
 use Throwable;
 
@@ -84,6 +85,26 @@ class AgentRunService
         if (! is_string($prompt) || ! is_array($context)) {
             throw new RuntimeException('The queued agent input is invalid.');
         }
+
+        $taskInput = $task->input ?? [];
+        $visionAttached = ($taskInput['vision_attached'] ?? ($task->vision_image_path !== null)) === true;
+        if ($agentRun->id === (int) $task->agentRuns()->oldest('id')->value('id') && $visionAttached) {
+            if ($task->vision_image_path === null || ! $task->vision_image_expires_at?->isFuture()) {
+                throw new RuntimeException('The private camera image expired or is unavailable. Submit a new task with a fresh image.');
+            }
+            if (! in_array($task->vision_image_mime_type, ['image/jpeg', 'image/png', 'image/webp'], true)) {
+                throw new RuntimeException('The private camera image has an unsupported media type.');
+            }
+            $imageContents = Storage::disk('local')->get($task->vision_image_path);
+            if (! is_string($imageContents)) {
+                throw new RuntimeException('The private camera image attachment is unavailable.');
+            }
+            $context['vision_image'] = [
+                'mime_type' => $task->vision_image_mime_type,
+                'data' => base64_encode($imageContents),
+            ];
+        }
+        $context['assistant_persona'] ??= ($task->input ?? [])['assistant_persona'] ?? 'Use a friendly, approachable tone.';
 
         $agent = $this->agentFactory->make($agentRun->agent_name, $task->mode);
         try {

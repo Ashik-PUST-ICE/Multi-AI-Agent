@@ -192,6 +192,30 @@ final class AnthropicAdapter extends AbstractHttpLlmProvider implements Streamin
 
         if ($role === 'assistant' && isset($message['tool_calls'])) {
             $content = $this->formatAssistantToolCalls($message);
+        } elseif (is_array($message['images'] ?? null) && $message['images'] !== []) {
+            $blocks = [];
+            if (is_string($content) && $content !== '') {
+                $blocks[] = ['type' => 'text', 'text' => $content];
+            }
+            foreach ($message['images'] as $image) {
+                if (! is_array($image)
+                    || ! is_string($image['mime_type'] ?? null)
+                    || ! is_string($image['data'] ?? null)) {
+                    throw new \InvalidArgumentException('A user image attachment has an invalid format.');
+                }
+
+                $blocks[] = [
+                    'type' => 'image',
+                    'source' => [
+                        'type' => 'base64',
+                        'media_type' => $image['mime_type'],
+                        'data' => $image['data'],
+                    ],
+                ];
+            }
+            $content = $blocks;
+        } else {
+            unset($message['images']);
         }
 
         return [

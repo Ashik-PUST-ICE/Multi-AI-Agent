@@ -6,7 +6,9 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\CreateAgentSpecVersionRequest;
 use App\Http\Requests\Api\TransitionAgentSpecStatusRequest;
 use App\Http\Requests\Api\UpdateAgentSpecRequest;
+use App\Models\AgentSpec;
 use App\Models\User;
+use App\Services\AgentPromptLinter;
 use App\Services\AgentSpecService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -15,6 +17,7 @@ class AgentSpecController extends Controller
 {
     public function __construct(
         private readonly AgentSpecService $agentSpecService,
+        private readonly AgentPromptLinter $promptLinter,
     ) {}
 
     public function index(): JsonResponse
@@ -25,6 +28,16 @@ class AgentSpecController extends Controller
     public function show(string $agentName, int $version): JsonResponse
     {
         return $this->agentSpecService->show($agentName, $version);
+    }
+
+    public function lint(string $agentName, int $version): JsonResponse
+    {
+        $specification = AgentSpec::query()
+            ->where('agent_name', $agentName)
+            ->where('version', $version)
+            ->firstOrFail();
+
+        return response()->json(['lint' => $this->promptLinter->lint($specification)]);
     }
 
     public function store(CreateAgentSpecVersionRequest $request, string $agentName): JsonResponse

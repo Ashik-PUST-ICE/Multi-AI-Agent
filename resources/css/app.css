@@ -105,6 +105,11 @@ main { max-width: 1260px; margin: 0 auto; padding: 31px 0 40px; }
 .task-schedules-panel { margin-top: 20px; padding: 18px 21px; }
 .task-schedules-panel .list-heading { margin: 0 0 13px; }
 .task-schedules-panel .task-form { margin-top: 0; padding: 0; }
+.proactive-suggestion { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; border-radius: 9px; background: #f7f8fc; }
+.proactive-suggestion + .proactive-suggestion { margin-top: 7px; }
+.proactive-suggestion strong, .proactive-suggestion span { display: block; }
+.proactive-suggestion strong { color: #303b50; font-size: 11px; }
+.proactive-suggestion span { margin-top: 5px; color: var(--muted); font-size: 10px; }
 .task-form select { width: 100%; height: 39px; padding: 0 12px; border: 1px solid #e1e6ee; border-radius: 8px; background: #fff; color: var(--ink); font-size: 12px; }
 .schedule-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .schedule-fields label { display: grid; gap: 7px; }
@@ -115,6 +120,13 @@ main { max-width: 1260px; margin: 0 auto; padding: 31px 0 40px; }
 .task-schedule-card p { margin: 0; color: #536078; font-size: 10px; }
 .task-schedule-card small { color: var(--muted); font-size: 10px; overflow-wrap: anywhere; }
 .form-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 4px; color: var(--muted); font-size: 10px; }
+.assistant-input-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.vision-capture { display: grid; gap: 8px; }
+#camera-preview, #camera-captured-image { display: block; width: min(100%, 520px); max-height: 360px; border: 1px solid #e1e6ee; border-radius: 9px; background: #101827; object-fit: contain; }
+#camera-captured-image { background: #f7f8fb; }
+.vision-confirmation { display: flex; align-items: flex-start; gap: 8px; color: #536078; font-size: 10px; line-height: 1.5; }
+.vision-confirmation input { margin-top: 2px; }
+.assistant-settings-form { display: grid; gap: 12px; }
 .task-estimate { padding: 12px; border: 1px solid #e5e9f1; border-radius: 9px; background: #f8f9fc; color: #536078; font-size: 11px; line-height: 1.6; white-space: pre-line; }
 .task-knowledge-fieldset { display: grid; gap: 7px; padding: 12px; border: 1px solid #e1e6ee; border-radius: 8px; }
 .task-knowledge-fieldset legend { padding: 0 5px; color: #4c5870; font-size: 11px; font-weight: 700; }
@@ -133,6 +145,27 @@ main { max-width: 1260px; margin: 0 auto; padding: 31px 0 40px; }
 .agent-directory-card { padding: 17px; }
 .agent-directory-card h3 { margin: 0 0 8px; font-size: 13px; }
 .agent-directory-card p { margin: 0 0 13px; color: var(--muted); font-size: 10px; }
+.skill-evaluation-panel { display: grid; gap: 16px; margin-top: 16px; padding: 18px; }
+.skill-evaluation-panel[hidden] { display: none; }
+.skill-evaluation-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.skill-evaluation-heading h3, .skill-evaluation-heading h4, .skill-evaluation-cases h4 { margin: 0; font-size: 13px; }
+.skill-evaluation-heading p, .skill-evaluation-cases > p, .skill-evaluation-runs > p { margin: 5px 0 0; color: var(--muted); font-size: 10px; }
+.skill-evaluation-policy, .skill-evaluation-case-form { display: grid; gap: 10px; padding: 14px; border: 1px solid #edf0f5; border-radius: 10px; background: #fcfcfe; }
+.skill-evaluation-policy { grid-template-columns: minmax(0, 1fr) minmax(140px, 220px) auto; align-items: end; }
+.skill-evaluation-policy label, .skill-evaluation-case-form label { display: grid; gap: 6px; color: #4c5870; font-size: 10px; font-weight: 700; }
+.skill-evaluation-policy label:first-child { display: flex; align-items: center; min-height: 36px; }
+.skill-evaluation-policy input[type="number"], .skill-evaluation-case-form input, .skill-evaluation-case-form textarea { width: 100%; padding: 9px 10px; border: 1px solid #e1e6ee; border-radius: 7px; background: #fff; font-size: 11px; }
+.skill-evaluation-case-form textarea { resize: vertical; }
+.skill-evaluation-case-form strong { font-size: 12px; }
+.skill-evaluation-cases, .skill-evaluation-runs { display: grid; gap: 9px; }
+.skill-evaluation-case { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 10px; border: 1px solid #edf0f5; border-radius: 8px; }
+.skill-evaluation-case > div:first-child { display: grid; min-width: 0; gap: 4px; }
+.skill-evaluation-case strong { font-size: 10px; }
+.skill-evaluation-case small, .skill-evaluation-result { color: var(--muted); font-size: 9px; overflow-wrap: anywhere; }
+.skill-evaluation-result { margin: -5px 0 0 10px; }
+.skill-usage-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(115px, 1fr)); gap: 8px; }
+.skill-usage-metrics span { display: grid; gap: 4px; padding: 10px; border: 1px solid #edf0f5; border-radius: 8px; color: var(--muted); font-size: 9px; }
+.skill-usage-metrics strong { color: var(--ink); font-size: 12px; }
 .agent-pack-select { width: 100%; }
 .pack-section { display: grid; gap: 14px; margin-top: 18px; padding: 20px; }
 .agent-pack-list, .agent-pack-admin-list { display: grid; gap: 10px; }
@@ -279,6 +312,41 @@ main { max-width: 1260px; margin: 0 auto; padding: 31px 0 40px; }
 .agent-stage.status-1 .stage-icon { border-color: #dcd9ff; background: #f1f0ff; color: var(--primary); }
 .stage-name { padding-top: 3px; font-size: 10px; font-weight: 700; }
 .stage-output { grid-column: 2 / 4; margin: -20px 0 10px; color: #738096; font-size: 10px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.agent-graph { display: grid; gap: 12px; margin-top: 17px; padding: 14px; border: 1px solid #e8ebf2; border-radius: 10px; background: #fbfcfe; }
+.agent-graph-header, .agent-graph-node-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.agent-graph-header { justify-content: space-between; }
+.agent-graph-header > div { display: grid; gap: 4px; }
+.agent-graph-header strong { font-size: 11px; }
+.agent-graph-header small, .graph-connection { color: var(--muted); font-size: 9px; }
+.graph-connection.is-connected { color: var(--green); }
+.graph-connection.is-disconnected { color: #a45b28; }
+.agent-graph-nodes { display: grid; gap: 7px; max-height: 520px; overflow: auto; }
+.agent-graph-node { padding: 10px; border: 1px solid #e7eaf1; border-radius: 8px; background: #fff; }
+.agent-graph-node-heading strong { margin-right: auto; font-size: 10px; }
+.agent-graph-node details { margin-top: 8px; }
+.agent-graph-node summary { color: #69758a; cursor: pointer; font-size: 9px; }
+.agent-graph-node dl { display: grid; grid-template-columns: minmax(92px, .35fr) minmax(0, 1fr); gap: 5px 10px; margin: 9px 0; font-size: 9px; }
+.agent-graph-node dt { color: var(--muted); }
+.agent-graph-node dd { margin: 0; overflow-wrap: anywhere; }
+.agent-graph-events { display: grid; gap: 4px; margin: 6px 0 0; padding: 0; list-style: none; }
+.agent-graph-events li { display: flex; justify-content: space-between; gap: 8px; color: #69758a; font-size: 9px; }
+.agent-graph-events time { white-space: nowrap; }
+.agent-graph-edge { color: #758099; font-size: 9px; text-align: center; }
+.agent-visualization-tabs { display: flex; flex-wrap: wrap; gap: 7px; }
+.agent-visualization-panel[hidden] { display: none; }
+.agent-office { display: grid; grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); gap: 12px; }
+.office-agent { position: relative; display: grid; justify-items: center; align-content: start; gap: 9px; min-width: 0; padding: 13px 10px; border: 1px solid #e7eaf1; border-radius: 12px; background: linear-gradient(180deg, #fff 0%, #f7f9fd 100%); text-align: center; }
+.office-agent-top { display: flex; width: 100%; align-items: flex-start; justify-content: space-between; gap: 4px; }
+.office-character { display: grid; width: 48px; height: 48px; place-items: center; border: 2px solid #dfe5f0; border-radius: 50%; background: #f0f3fb; font-size: 25px; }
+.office-agent.office-state-running .office-character { border-color: #c9c4ff; background: #f1f0ff; }
+.office-agent.office-state-completed .office-character { border-color: #c7e9db; background: #edf8f3; }
+.office-agent.office-state-failed .office-character { border-color: #f0d7d9; background: #fff3f3; }
+.office-agent.office-state-waiting .office-character { border-color: #f2dfb6; background: #fff9eb; }
+.office-state-label { color: #647087; font-size: 9px; font-weight: 700; }
+.office-speech { position: relative; width: 100%; min-height: 46px; padding: 9px; border: 1px solid #e5e9f1; border-radius: 10px; background: #fff; color: #526078; font-size: 9px; line-height: 1.5; overflow-wrap: anywhere; }
+.office-speech::after { position: absolute; top: -5px; left: 50%; width: 8px; height: 8px; border-top: 1px solid #e5e9f1; border-left: 1px solid #e5e9f1; background: #fff; content: ""; transform: translateX(-50%) rotate(45deg); }
+.office-agent > strong { font-size: 10px; }
+.office-eta { margin: 0; color: var(--muted); font-size: 9px; line-height: 1.5; }
 .result-card { margin-top: 12px; padding: 13px; border-radius: 9px; background: #f8f9fc; }
 .result-card strong { display: block; margin-bottom: 6px; font-size: 10px; }
 .result-card p { margin: 0; color: #647087; font-size: 10px; line-height: 1.6; white-space: pre-wrap; }
@@ -334,6 +402,8 @@ main { max-width: 1260px; margin: 0 auto; padding: 31px 0 40px; }
     .mobile-navigation .navigation-link > span:first-child { font-size: 15px; }
     .mobile-navigation .navigation-count { position: absolute; top: 1px; left: calc(50% + 13px); min-width: 17px; height: 17px; }
     .brain-form-grid, .agent-brain-grid, .agent-directory, .agent-trust-grid, .provider-key-grid { grid-template-columns: 1fr; }
+    .skill-evaluation-policy { grid-template-columns: 1fr; }
+    .skill-evaluation-case { align-items: flex-start; flex-direction: column; }
     .agent-pack-card { align-items: flex-start; flex-direction: column; }
     .agent-pack-actions { justify-content: flex-start; }
     .knowledge-form { grid-template-columns: 1fr; }

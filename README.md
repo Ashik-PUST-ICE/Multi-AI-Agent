@@ -29,6 +29,14 @@ Laravel API-first multi-agent workspace. The Milestone 1 web client submits task
 
    The default seeder registers the `user` and `admin` roles and the `agent_specs.manage`, `agent_packs.manage`, `knowledge_settings.manage`, `security.manage`, and `platform.manage` permissions. On an existing installation, rerun `php artisan db:seed` to grant the new dashboard permission to the admin role. The agent-spec seeder registers the configured versioned agent specifications, including the Phase J Skeptic. Starter agent packs are seeded on first access to the pack API.
 
+   To create or update the bootstrap admin accounts, set `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `SUPER_ADMIN_EMAIL`, and `SUPER_ADMIN_PASSWORD` in your local `.env`, then run:
+
+   ```sh
+   php artisan db:seed --class='Database\Seeders\BootstrapAdminAccountsSeeder'
+   ```
+
+   Use distinct email addresses and passwords of at least 12 characters. Passwords are never stored in source code or printed by the seeder. The admin receives the standard admin role; the super-admin receives all currently registered web permissions.
+
 3. Install frontend dependencies and build the client:
 
    ```sh
@@ -65,6 +73,61 @@ $user->createToken('web-dashboard')->plainTextToken;
 
 Paste the returned token into the dashboard's API token field. Never paste a token into source code, `.env`, screenshots, or shared logs. Registration requires a password with at least 12 characters, including letters and numbers.
 
+## CLI client
+
+The CLI uses the versioned API and never asks for an account password in the terminal. Start a Laravel terminal in the project directory, then run:
+
+```sh
+php artisan agent:login --name="Ashik's laptop"
+```
+
+Open the displayed verification URL in a browser, enter the device code and account credentials, then explicitly approve or deny the sign-in. The code is not placed in the URL. The CLI polls until approval and stores the resulting revocable 90-day token in the current user's configuration directory (`%APPDATA%\Multi-AI-Agent` on Windows or `$XDG_CONFIG_HOME/multi-ai-agent` / `~/.config/multi-ai-agent` elsewhere). On POSIX systems, the directory and credential file are restricted to the current user. Use `php artisan agent:logout` to revoke the token and remove the local file. Do not copy the credential file to another machine.
+
+```sh
+php artisan agent:ask "Hello"
+php artisan agent:run "Research this topic"
+php artisan agent:status 42 --json
+php artisan agent:approvals --json
+php artisan agent:approve 7
+php artisan agent:notifications --json
+```
+
+`agent:run` estimates first, shows a TaskBrief when required, asks for explicit approval, then queues a Sandbox task and follows its owner-scoped SSE progress stream. `agent:ask` also gates complex or risky requests with TaskBrief review. `agent:approve` asks before approving an exact pending tool request; `--yes` is intended only for scripts where that approval is explicit in the invoking command. JSON output is available on API commands; exit status `3` means a user decision is still required, and non-zero statuses indicate failure. Add `--api=https://your-host` to select the API server when logging in or running a command. Remote API URLs must use HTTPS; HTTP is accepted only for localhost and reserved `.test` development hosts.
+
+## Local connector (PHP CLI)
+
+The local connector is an explicit, one-command-at-a-time PHP CLI client. It opens no listening port and does not run remote instructions or poll for unattended work. Pair the CLI with `php artisan agent:login --name="This device"`; the account owner can later revoke its device token from the device API. Local policy is stored separately under the current user's application configuration directory. All capabilities (`file_read`, `file_write`, `terminal`, and `browser`) start disabled; terminal and browser capabilities cannot currently be enabled because they do not have an isolated runtime implementation.
+
+```sh
+php artisan connector:status
+php artisan connector:allow-folder "C:\Users\you\Documents\project"
+php artisan connector:trust-level 1
+php artisan connector:capability file_read --enable
+php artisan connector:file-read "C:\Users\you\Documents\project\README.txt"
+php artisan connector:trust-level 2
+php artisan connector:capability file_write --enable
+php artisan connector:file-write "C:\Users\you\Documents\project\notes.txt" "New text"
+php artisan connector:file-write "C:\Users\you\Documents\project\notes.txt" "New text" --live
+php artisan connector:file-trash "C:\Users\you\Documents\project\notes.txt" --live
+php artisan connector:file-restore <trash-id>
+php artisan connector:kill-switch
+php artisan connector:resume
+```
+
+Local Trust Level defaults to 0; file reads require level 1 and writes/deletes/restores require level 2. Auto access is disabled and local operations always require user-controlled mode. Without `--live`, reads and writes are dry-run only and do not read file contents or modify files. Live writes show a bounded text diff, require interactive confirmation, reject a stale preview, and create a local checkpoint before replacement. Deletes are recoverable local Trash operations, and restore refuses to overwrite an existing file. Local policy and kill-switch enforcement work without an API connection. `.env`, SSH keys, password/credential files, browser profiles, symbolic links, and paths outside explicitly allowlisted folders are denied. Activity logs store operation, mode, result, and a path hash—not file contents or raw paths. This PHP CLI foundation does not yet include a background service, remote task dispatch/cancellation, Flight Recorder replication, signed updates, browser automation, or terminal execution; those remain disabled rather than bypassing the platform Code Sandbox and trust gates.
+
+## Coding proposals (Phase AE foundation)
+
+Authenticated clients can submit owner-scoped coding plans and diffs through `POST /api/v1/coding/proposals`, list and review them through the versioned API, and approve or reject a pending proposal. The API scans plan and diff text for credential patterns before storage and again before a review decision; blocked responses contain finding labels, not matched values. `workspace_label` is display-only and filesystem paths are rejected. An approval records review only: it does not apply files, create Git branches, run tests, create commits or pull requests, or execute commands. The Docker-backed coding runtime and VS Code extension are not implemented in this proposal-only scope.
+
+## Voice, mobile, and daily briefing (Phase AF foundation)
+
+The responsive web client can be installed as a PWA. Its service worker caches only versioned same-origin `/build/assets/` files; API responses, task data, and navigation pages are never cached. Push notifications use generic text and do not expose task content on a locked screen. Voice input/output is opt-in and supports browser speech in Bangla or English; speech is convenience only and cannot authenticate or approve actions. The optional daily task briefing is off by default, owner-scoped, limited to 1–10 unfinished tasks per local day, and never starts tasks. Email/calendar/file-change proactive triggers, native mobile apps, wake words, and integrations remain unimplemented.
+
+## Remote device queue (Phase AG API foundation)
+
+An authenticated owner can submit a task with `requires_device: true` and an active `device_token_id` returned by `GET /api/v1/devices`. The task is persisted with a durable queue entry (default expiry 24 hours; maximum 30 days; optional priority 0–5) and is not dispatched to the cloud worker. The matching device token polls `GET /api/v1/devices/{device}/queue`; repeated delivery returns the same idempotency key. Expired work moves to `needs_confirmation` and is never returned to the device until the owner explicitly posts `{"confirm":true}` to `/api/v1/device-queue/{queue}/reconfirm`, which renews the expiry for 24 hours. Owners can list queue entries at `/api/v1/device-queue` or cancel an entry; cancellation also stops its pending task. This API foundation delivers metadata and task prompts only—it does not execute work on a device, start a Home Hub, send Wake-on-LAN, or control device power. Power capabilities remain off.
+
 ## Agent Trust Levels
 
 Each user controls their own agent trust levels on the Agents page. Orchestrator, Writer, Reviewer, and Skeptic start at level 0; Research starts at level 1 for read-only tools. Read tools require level 1, write tools level 2, outbound communication level 3, and sensitive actions level 4. A tool call below its declared minimum is blocked before either `simulate()` or `execute()` can run. Live calls at level 2 or above always require approval, in addition to any tool-specific approval rule. When an agent attempts a tool above its current level, the system records the violation and automatically lowers that agent's trust by one level, never below 0. User changes and automatic demotions are kept in per-user history.
@@ -75,8 +138,20 @@ Each user controls their own agent trust levels on the Agents page. Orchestrator
 |---|---|---|
 | `POST` | `/api/v1/auth/register` | Register a user, create a private workspace, and issue a token |
 | `POST` | `/api/v1/auth/login` | Authenticate an active user and issue a token |
+| `POST` | `/api/v1/auth/device/code` | Start browser-approved device-code login for the CLI |
+| `POST` | `/api/v1/auth/device/token` | Poll for CLI authorization; returns a token once after browser approval |
+| `GET` | `/api/v1/openapi.yaml` | Download the OpenAPI 3.1 specification |
+| `GET` | `/api/v1/devices` | List owned device tokens without exposing their secret values |
+| `POST` | `/api/v1/devices` | Register a named client device and issue a revocable token |
+| `DELETE` | `/api/v1/devices/{device}` | Revoke an owned device token |
+| `POST` | `/api/v1/assistant/messages` | Send a message for a direct assistant reply or orchestrated task |
+| `GET` | `/api/v1/assistant/conversations` | List the authenticated user's synchronized conversations |
+| `GET` | `/api/v1/assistant/conversations/{conversation}` | Read an owned conversation and linked task results |
+| `GET` | `/api/v1/tasks/{task}/events/stream` | Stream owner-scoped task progress over reconnectable SSE |
 | `POST` | `/api/v1/auth/logout` | Revoke the current token |
 | `GET` | `/api/v1/user` | Return the authenticated user's account |
+| `GET` | `/api/v1/assistant/settings` | Read the owner's persona, browser voice, camera-vision, and disabled smart-home preferences |
+| `PUT` | `/api/v1/assistant/settings` | Update the owner's assistant experience preferences; smart-home actions remain disabled |
 | `GET` | `/api/v1/trust` | Read the authenticated user's agent trust levels and change history |
 | `PUT` | `/api/v1/trust/{agentName}` | Change one of the authenticated user's agent trust levels, with a reason |
 | `GET` | `/api/v1/access` | Read access modes, owned Auto policies, fixed Never-Auto categories, and notification settings |
@@ -117,7 +192,22 @@ Each user controls their own agent trust levels on the Agents page. Orchestrator
 | `POST` | `/api/v1/task-schedules` | Create a one-time, daily, or weekly Sandbox task schedule |
 | `DELETE` | `/api/v1/task-schedules/{schedule}` | Cancel an owned schedule and any queued occurrence |
 | `GET` | `/api/v1/tasks/{task}` | View task and agent-run status |
-| `GET` | `/api/v1/skills` | List vetted built-in skills and their fixed permission metadata |
+| `GET` | `/api/v1/tasks/{task}/trace` | Export an owned task's safe Flight Recorder spans as OTLP trace JSON |
+| `GET` | `/api/v1/observability/summary` | Read owner-scoped failure-category and warning metrics |
+| `GET` | `/api/v1/skills` | List built-in and workspace-visible skill metadata |
+| `POST` | `/api/v1/skills` | Create an inactive skill draft; external text requires explicit owner action |
+| `POST` | `/api/v1/skills/drafts/from-task/{task}` | Suggest an editable, unsaved skill template from an owned successful task |
+| `GET` | `/api/v1/skills/{skill}` | Read an owned skill or visible tenant skill |
+| `PUT` | `/api/v1/skills/{skill}` | Create a new pending-review version of an owned skill |
+| `POST` | `/api/v1/skills/{skill}/verify` | Verify and enable the exact reviewed content hash |
+| `PUT` | `/api/v1/skills/{skill}/enabled` | Enable or disable an owned verified skill |
+| `POST` | `/api/v1/skills/{skill}/rollback/{version}` | Create a new pending-review version from older content |
+| `GET` | `/api/v1/skills/{skill}/evaluations` | Read owner-only evaluation test cases, policy, and recent scores |
+| `POST` | `/api/v1/skills/{skill}/test-cases` | Add an evaluation test case (up to 20 per skill) |
+| `PUT` / `DELETE` | `/api/v1/skills/{skill}/test-cases/{testCase}` | Update or remove an owned evaluation test case |
+| `PUT` | `/api/v1/skills/{skill}/evaluation-policy` | Configure optional score-threshold auto-disable (off by default) |
+| `POST` | `/api/v1/skills/{skill}/evaluate` | Explicitly evaluate with the approved Research model, tool-free in Sandbox |
+| `GET` | `/api/v1/skills/{skill}/usage` | Read owner-only matched uses, outcomes, tokens, cost attribution, and version counts |
 | `GET` | `/api/v1/tasks/{task}/replay` | Read-only event replay in Sandbox mode |
 | `POST` | `/api/v1/tasks/{task}/replay/{agentRun}/resume` | Restart a completed/failed step as a new Sandbox task |
 | `POST` | `/api/v1/tasks/{task}/replay-shares` | Create an expiring read-only replay link (1–168 hours) |
@@ -129,6 +219,7 @@ Each user controls their own agent trust levels on the Agents page. Orchestrator
 | `POST` | `/api/v1/approvals/{approval}/reject` | Reject the pending action |
 | `POST` | `/api/v1/approvals/batch` | Decide up to 25 pending approvals of the same action type |
 | `GET` | `/api/v1/admin/agent-specs` | List agent specifications and versions (requires `agent_specs.manage`) |
+| `GET` | `/api/v1/admin/agent-specs/{agentName}/versions/{version}/lint` | Run read-only advisory prompt checks (requires `agent_specs.manage`) |
 | `POST` | `/api/v1/admin/agent-specs/{agentName}/versions` | Create a draft spec version |
 | `PATCH` | `/api/v1/admin/agent-specs/{agentName}/versions/{version}` | Edit a draft spec |
 | `POST` | `/api/v1/admin/agent-specs/{agentName}/versions/{version}/status` | Advance draft → test → active |
@@ -148,7 +239,7 @@ Each user controls their own agent trust levels on the Agents page. Orchestrator
 
 ## Private knowledge and memory
 
-Configure an embedding provider and model in the Knowledge view before uploading. Embedding choices currently include OpenAI and Gemini; the user's saved provider key is used server-side and is never returned by the API. The Knowledge File Manager service stores bytes on Laravel's private `local` disk, while `knowledge_documents` owns per-user metadata and `knowledge_chunks` owns extracted text and embeddings. Bytes are not stored in the database and are never served from the public disk. Supported documents are TXT, Markdown, CSV, PDF, XLS/XLSX, and PNG/JPG/JPEG/WEBP. PDF and spreadsheet extraction use Composer libraries; image OCR requires a local Tesseract installation, whose executable path is host configuration (`KNOWLEDGE_OCR_BINARY`) and is not an end-user setting. Files are treated as data only: spreadsheet formulas/macros are not executed.
+Configure an embedding provider and model in the Knowledge view before uploading. Embedding choices currently include OpenAI and Gemini; the Orchestrator's separately saved provider key is used server-side and is never returned by the API. The Knowledge File Manager service stores bytes on Laravel's private `local` disk, while `knowledge_documents` owns per-user metadata and `knowledge_chunks` owns extracted text and embeddings. Bytes are not stored in the database and are never served from the public disk. Supported documents are TXT, Markdown, CSV, PDF, XLS/XLSX, and PNG/JPG/JPEG/WEBP. PDF and spreadsheet extraction use Composer libraries; image OCR requires a local Tesseract installation, whose executable path is host configuration (`KNOWLEDGE_OCR_BINARY`) and is not an end-user setting. Files are treated as data only: spreadsheet formulas/macros are not executed.
 
 Admins with the `knowledge_settings.manage` permission can change upload size, extraction size, chunk count, chunk size, and overlap from the Knowledge page. These operational policies are stored in the database and apply system-wide. The configured upload limit must not exceed the PHP/web-server request limits. Storage credentials, encryption/app keys, and host executable paths remain server-side configuration; do not expose them as ordinary database form inputs.
 
@@ -161,6 +252,8 @@ Tasks never receive personal memory implicitly. The user must select up to 10 ac
 Run-event metadata is broadcast after commit to a private per-user Reverb channel; socket messages contain only the task/event identifiers and type, never prompts, model output, or tool payloads. The browser uses that notification to refetch the normal owner-scoped task API, and falls back to polling if WebSockets are unavailable. This streams task and agent progress as events are recorded; model tokens themselves are not currently streamed.
 
 Task schedules are owner-scoped, limited to 10 active schedules per user, and accept one-time, daily, or weekly recurrence in an IANA timezone. Starts must be within 90 days; recurring schedules require an expiry no more than 90 days after the first run. The scheduler checks due items every minute, keeps occurrences in the database queue, and skips work that is more than 15 minutes late rather than running stale tasks. Each accepted occurrence creates a normal Sandbox task and continues to obey the current trust, approval, token, and user-provider settings. Configure a queue worker and `php artisan schedule:work` in deployment; schedules do not run if the scheduler is stopped.
+
+Assistant preferences are owner-scoped. Persona text is an untrusted style preference and cannot change safety, access, trust, tools, or authentication. Browser speech is user-triggered, may be processed by the browser or operating-system speech service, and is never authentication. Camera access is off by default; image submission needs an explicit capture, checkbox, and confirmation, and requires the selected approved model and every configured fallback to have verified image capability. JPEG, PNG, and WebP images up to 3 MB are stored on the private local disk for at most 30 days, then purged daily; paths and image bytes are not returned by task APIs. Image pricing is reported as unavailable; a configured cost cap therefore rejects image tasks rather than claiming a complete estimate. Smart-home controls are not implemented and remain disabled; locks, stoves, and gas devices are Never-Auto.
 
 Task submission accepts `title`, `prompt`, and optionally an enabled `agent_pack` slug, up to 10 distinct `success_criteria` strings (500 characters each), and a task cost cap; any client-supplied `mode` is ignored and tasks start in Sandbox. Sandbox tools are routed to `simulate()` only, sandbox runs use the configured lower token ceiling, and when user-entered rates exist they use the least expensive approved model in a single currency. Agent runs, messages, and events inherit mode from their owning task/run; mode changes on existing tasks and recorded run data are rejected. The owner-scoped replay endpoint reads recorded events and sanitized messages only; it never invokes tools or providers. Restarting a completed or failed stage creates a new Sandbox task, uses current approved model settings and trust gates, and does not repeat Live actions. Share links are bearer links whose hashes are stored server-side; they expire within seven days, can be revoked by the owner, and expose a whitelisted event timeline only—not prompts, message content, or arbitrary event payloads. Provider cost in the timeline is computed from provider-reported/estimated token usage and the user's configured rates, and is not a billing statement.
 
@@ -188,13 +281,15 @@ The Brain page lets users set each agent to Auto, Fixed, or Custom, choose a che
 
 Routing decisions, rationale, and a fallback attempt are recorded as run events. A single user-selected fallback may be tried only for retryable provider failures before any output or tool call; it must also be approved, capability-compatible, and have configured credentials. The selection is never inferred to be "stronger" without evaluation data. Each Sandbox run records a fingerprint of its Brain settings, and Live transition is blocked if the settings changed since that run. Brain settings do not change task mode or trust level. Evaluation results remain advisory and never change routing preferences automatically.
 
-Task estimates include a versioned `TaskBrief` created by a bounded local-rule analyzer before orchestration. It classifies Bengali, Banglish, English, or mixed-language requests; suggests intent, explicitly detected file/date entities, clarification questions (at most two), success criteria, and advisory risk/complexity. The original task text is kept unchanged. The analyzer makes no model call, does not ask questions autonomously, and cannot grant trust, tool, or access permissions. Proposed criteria are suggestions; users can add them to and edit the task's criteria before submission. The estimate displays matched skill summaries and adds selected guidance to the agent context; routing receives the complexity label as advisory metadata.
+Task estimates include a versioned `TaskBrief` created by a bounded local-rule analyzer before orchestration. It classifies Bengali, Banglish, English, or mixed-language requests; suggests intent, explicitly detected file/date entities, clarification questions (at most two), success criteria, and advisory risk/complexity. The original task text is kept unchanged. The analyzer makes no model call, does not ask questions autonomously, and cannot grant trust, tool, or access permissions. Proposed criteria are suggestions; users can add them to and edit the task's criteria before submission. Moderate/complex or non-low-risk briefs require a short-lived, owner-bound review token from the estimate endpoint before the API accepts the task or a schedule; a changed prompt or another user's token is rejected. Approved risky schedules persist that review so their queued occurrences can execute without bypassing the review gate. The estimate displays matched skill summaries and adds selected guidance to the agent context; routing receives the complexity label as advisory metadata.
 
-`GET /api/v1/skills` exposes the fixed curated built-in skill catalog. Matching is capped at two skills. Only matched skill instructions are progressively added to agent system guidance, marked untrusted; skill metadata cannot alter the active agent specification, model capability filter, trust level, or permitted tools. No external skill installation, user/organization skill authoring, script execution, skill version lifecycle, correction learning, skill evaluation, or system-prompt lint/evaluation is enabled. This keeps unverified code and externally supplied skill instructions out of execution.
+`GET /api/v1/skills` exposes built-in and workspace-visible skill metadata without instructions. Owners may submit `SKILL.md` instruction text as a draft; external text requires an explicit owner action, and publisher/source claims are not independently authenticated because the platform performs no remote fetch. Drafts remain inactive until the owner verifies the displayed SHA-256 content hash; secret and unsafe-instruction findings block verification. Edits and rollbacks create new pending-review versions. Tenant-visible skills can be used by members of that tenant, but only their owner can edit, verify, enable, or roll them back. Matching is capped at two skills, and only matched, verified instructions are progressively added to untrusted task context. Skill manifests cannot grant tools, trust, model capabilities, or access. Script execution is disabled and no script content is executed. External installation is never initiated by agents. Built-in skills remain application-managed. Owners may define up to 20 prompt/reference/criterion test cases per skill and explicitly evaluate its current version with their approved Research model; evaluations run without tools, store lexical token-F1/literal-criterion scores and token counts but not outputs, and may incur provider charges. These heuristic scores are not semantic quality certifications. Automatic deactivation is off by default and only applies after an owner opts in and sets a minimum score. Owner-only usage analytics count matched tasks, outcomes, aggregated tokens, priced cost by currency, and version usage without exposing task prompts; tracking starts for tasks created after this feature is deployed. In multi-skill tasks, the full task cost is attributed to each matched skill for context and should not be summed across skills as an allocated cost.
+
+An owner may request a Skill draft from a successfully completed task. The proposal is deterministic and unsaved: it does not call an LLM or copy the task prompt/result, defaults to personal visibility, masks PII in the source title, and requires the owner to edit and explicitly save it. The saved skill still starts inactive and must pass the normal scan and exact-hash verification.
 
 Access defaults to owner-controlled `user` mode at both account and agent levels. Every Live tool call requires an exact owner approval unless an active, unexpired Auto policy matches the owner, agent, tool, scope, task (when task-scoped), remaining use limit, and (for write/approval-sensitive tools) the complete exact input object. Never-Auto categories include access, trust, credential, kill-switch and installation changes; destructive actions; lock/stove/gas controls; payment and transfer actions; outbound messages; and prompt-injection or Skeptic-related actions. Policies with an undo window store the exact tool input encrypted and schedule a delayed release; the owner can cancel before the deadline. The release revalidates the live task/run, approval, policy scope, expiry, use limit, Auto mode, Never-Auto status, trust level, and input constraints. Sandbox always follows the existing simulate-only path. Agents cannot change access settings or create/revoke policies. The security threat model is documented in [SECURITY-THREAT-MODEL.md](./SECURITY-THREAT-MODEL.md); local Agent Pack definitions are protected by an application-key HMAC, while provider credentials remain owner-scoped rather than separate per-agent keys.
 
-Agent activity messages/events, trust history, security audit metadata, and streamed Writer drafts mask common email, phone, payment-card, and SSN patterns along with credential-shaped values. To preserve task behavior, the original task and provider/tool inputs and the owner's completed result are not rewritten. `GET /api/v1/audit-logs` returns the authenticated owner's recent access-mode, policy, trust, model-selection, credential-change, integration, and tool-approval records; audit metadata excludes raw credentials and exact approval inputs. Agent-pack and skill guidance now remain in the untrusted task-context message instead of being elevated into the system prompt. Files, web pages, memories, and tool output are likewise treated as reference data, never as permission or safety instructions.
+Agent activity messages/events, trust history, security audit metadata, and streamed Writer drafts mask common email, phone, payment-card, and SSN patterns along with credential-shaped values. To preserve task behavior, the original task and provider/tool inputs and the owner's completed result are not rewritten. `GET /api/v1/audit-logs` returns the authenticated owner's recent access-mode, policy, trust, model-selection, credential-change, integration, tool-approval, and Sandbox-to-Live transition records; transition requests are audited whether they pass or are blocked. Execution mode belongs to each task and agent run; shared, versioned agent specifications and packs remain mode-neutral. Audit metadata excludes raw credentials and exact approval inputs. Agent-pack and skill guidance now remain in the untrusted task-context message instead of being elevated into the system prompt. Files, web pages, memories, and tool output are likewise treated as reference data, never as permission or safety instructions.
 
 The notification center supports owner-scoped history and read/unread state. User-configured Email (SMTP), browser Push, Telegram, and WhatsApp channels are optional; credentials are encrypted in the database, never returned by settings APIs, and are configured in Settings rather than `.env`. Web Push requires HTTPS, a supported public push endpoint, and PHP OpenSSL configured for P-256 key generation (Windows PHP installations may need `OPENSSL_CONF` set before startup). Delivery attempts are logged and failed channels retry up to three times with increasing delays. Quiet hours and the daily digest time use the application timezone and defer non-high-priority delivery; urgent approval notices bypass quiet hours. Approval reminders escalate through the configured channel order. Notification response links are random, hashed at rest, expiring, and one-time; opening the page does not decide. Links are unavailable for deferred actions and higher-risk approvals, which remain app-only. Silence never approves an action. External channels depend on user-provided provider credentials and the deployment's queue worker and scheduled-command runner.
 
@@ -230,11 +325,11 @@ Run the bounded, GET-only health/info load check against the local stack with `p
 
 ## Observability
 
-Authenticated owners can read the last 30 days of failure-category and warning counts from `GET /api/v1/observability/summary`. The task owner can export one task's Flight Recorder as OpenTelemetry-compatible JSON with `GET /api/v1/tasks/{task}/trace`; trace IDs and parent span IDs connect task, agent-run, model-call, and tool events. Exported spans contain allowlisted operational attributes only and exclude prompts, model output, tool arguments/results, credentials, and arbitrary event payloads.
+Authenticated owners can read the last 30 days of failure-category and warning counts from `GET /api/v1/observability/summary`. Failure counts use spec, coordination, verification, cost, security, and other categories. The task owner can export one task's Flight Recorder as OpenTelemetry-compatible JSON with `GET /api/v1/tasks/{task}/trace`; trace IDs and parent span IDs connect task, agent-run, model-call, and tool events. Exported spans contain allowlisted operational attributes only and exclude prompts, model output, tool arguments/results, credentials, and arbitrary event payloads.
 
 The Skeptic review signal is a bounded heuristic: repeated approvals without findings raise a review warning after five assessments, but this is not proof of sycophancy. Repeated normalized output from the same agent on the same task input stops that task as stagnated; repeated output after a context change is not treated as a loop. Empty text outputs are recorded as silent failures and cannot complete a task. Failure counters are based on recorded failed events and are limited to 1,000 recent events per summary.
 
-The trace endpoint emits OTLP trace JSON but does not push to a collector or claim full OpenTelemetry SDK instrumentation. Agent handoffs remain on the existing versioned envelope; A2A and MCP protocol adapters are not implemented by this phase.
+The trace endpoint emits OTLP trace JSON but does not push to a collector or claim full OpenTelemetry SDK instrumentation. Internal agent handoffs remain on the existing versioned envelope. The external MCP integration supports JSON-RPC initialization and tool listing/calls over stateless JSON HTTP responses; A2A interoperability and MCP streaming responses are not implemented.
 
 ## Validation
 

@@ -217,9 +217,18 @@ class TaskCostBudgetService
      */
     private function estimateInputTokens(array $messages): int
     {
-        $encodedMessages = json_encode($messages, JSON_THROW_ON_ERROR);
+        $imageCount = 0;
+        $textMessages = $messages;
+        foreach ($messages as $message) {
+            $imageCount += is_array($message['images'] ?? null) ? count($message['images']) : 0;
+        }
+        foreach ($textMessages as &$message) {
+            unset($message['images']);
+        }
+        unset($message);
+        $encodedMessages = json_encode($textMessages, JSON_THROW_ON_ERROR);
         $charactersPerToken = max(1, (int) config('llm.estimated_characters_per_token', 3));
 
-        return max(1, (int) ceil(mb_strlen($encodedMessages) / $charactersPerToken));
+        return max(1, (int) ceil(mb_strlen($encodedMessages) / $charactersPerToken)) + ($imageCount * 1024);
     }
 }

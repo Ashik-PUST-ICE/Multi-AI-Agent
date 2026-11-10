@@ -89,6 +89,16 @@ class User extends Authenticatable
         return $this->hasMany(Task::class);
     }
 
+    public function deviceTaskQueueEntries(): HasMany
+    {
+        return $this->hasMany(DeviceTaskQueueEntry::class);
+    }
+
+    public function codingChangeProposals(): HasMany
+    {
+        return $this->hasMany(CodingChangeProposal::class);
+    }
+
     public function taskSchedules(): HasMany
     {
         return $this->hasMany(TaskSchedule::class);
@@ -102,6 +112,16 @@ class User extends Authenticatable
     public function llmSettings(): HasOne
     {
         return $this->hasOne(UserLlmSetting::class);
+    }
+
+    public function assistantSettings(): HasOne
+    {
+        return $this->hasOne(UserAssistantSetting::class);
+    }
+
+    public function assistantConversations(): HasMany
+    {
+        return $this->hasMany(AssistantConversation::class);
     }
 
     public function apiKeys(): HasMany
@@ -137,6 +157,11 @@ class User extends Authenticatable
     public function memories(): HasMany
     {
         return $this->hasMany(UserMemory::class);
+    }
+
+    public function skills(): HasMany
+    {
+        return $this->hasMany(UserSkill::class);
     }
 
     public function accessPolicies(): HasMany

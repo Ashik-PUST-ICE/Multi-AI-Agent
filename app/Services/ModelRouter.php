@@ -39,6 +39,7 @@ class ModelRouter
         bool $requireConfiguredCredentials = false,
         ?string $prompt = null,
         array $excludedModels = [],
+        ?string $intakeComplexity = null,
     ): array {
         $settings = $user->llmSettings;
         if ($settings === null) {
@@ -47,7 +48,13 @@ class ModelRouter
 
         $brainMode = $brainModeOverride ?? $settings->agent_brains[$agentName] ?? AGENT_BRAIN_MODE_AUTO;
         $routingPolicy = $settings->routing_policy ?? MODEL_ROUTING_POLICY_CHEAPEST;
-        $complexity = $this->estimateComplexity($prompt ?? '');
+        $complexity = in_array($intakeComplexity, [
+            self::COMPLEXITY_SIMPLE,
+            self::COMPLEXITY_MODERATE,
+            self::COMPLEXITY_COMPLEX,
+        ], true)
+            ? $intakeComplexity
+            : $this->estimateComplexity($prompt ?? '');
         $defaultSelection = [
             'provider' => $settings->provider,
             'model' => $settings->model,

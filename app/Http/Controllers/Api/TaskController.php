@@ -44,6 +44,11 @@ class TaskController extends Controller
         return $this->orchestratorService->show($request->user(), $task);
     }
 
+    public function graph(Request $request, int $task): JsonResponse
+    {
+        return $this->orchestratorService->graph($request->user(), $task);
+    }
+
     public function replay(Request $request, int $task): JsonResponse
     {
         return $this->orchestratorService->replay($request->user(), $task);

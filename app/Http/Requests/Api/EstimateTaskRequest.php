@@ -25,6 +25,7 @@ class EstimateTaskRequest extends FormRequest
             'knowledge_document_ids.*' => ['required', 'integer', 'min:1', 'distinct'],
             'memory_ids' => ['sometimes', 'array', 'max:10'],
             'memory_ids.*' => ['required', 'integer', 'min:1', 'distinct'],
+            'vision_image_attached' => ['sometimes', 'boolean'],
         ];
     }
 }

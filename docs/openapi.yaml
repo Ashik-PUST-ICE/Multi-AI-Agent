@@ -1,0 +1,703 @@
+openapi: 3.1.0
+info:
+  title: Multi-AI-Agent API
+  version: 1.0.0
+  description: |
+    Versioned API used by the web UI and external clients. All state-changing
+    assistant and task actions remain subject to the user's configured access,
+    trust, sandbox, budget, and approval policies.
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+paths:
+  /openapi.yaml:
+    get:
+      security: []
+      summary: Download this OpenAPI document
+      responses:
+        '200':
+          description: OpenAPI YAML document
+  /auth/device/code:
+    post:
+      security: []
+      summary: Start a browser-approved CLI device login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [device_name]
+              properties:
+                device_name:
+                  type: string
+                  maxLength: 100
+      responses:
+        '201':
+          description: Short-lived device and user codes; direct the user to verification_uri
+        '429':
+          description: Too many device authorization requests
+  /auth/device/token:
+    post:
+      security: []
+      summary: Poll for a browser-approved CLI token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [device_code]
+              properties:
+                device_code:
+                  type: string
+                  minLength: 64
+                  maxLength: 64
+      responses:
+        '200':
+          description: One-time bearer token returned after approval
+        '400':
+          description: Device code invalid, expired, denied, or already used
+        '428':
+          description: Authorization is still pending
+  /auth/device/approve:
+    post:
+      security: []
+      summary: Approve a CLI device using account credentials in the browser
+      description: Requires account password, matching user code, and explicit confirmation. Passwords are never sent to or stored by the CLI.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_code, email, password, confirm]
+              properties:
+                user_code:
+                  type: string
+                  minLength: 8
+                  maxLength: 9
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  writeOnly: true
+                confirm:
+                  type: boolean
+      responses:
+        '200':
+          description: Device code approved; token remains available only through the device poll
+        '422':
+          description: Credentials, code, or explicit confirmation are invalid
+  /auth/device/deny:
+    post:
+      security: []
+      summary: Deny a pending CLI device authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_code]
+              properties:
+                user_code:
+                  type: string
+      responses:
+        '200':
+          description: Device authorization denied
+        '422':
+          description: Device request is expired or unavailable
+  /devices:
+    get:
+      summary: List the current user's registered device tokens
+      responses:
+        '200':
+          description: Device token metadata; token values are never returned
+    post:
+      summary: Register a client device and issue a revocable bearer token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  maxLength: 100
+                expires_at:
+                  type: string
+                  format: date-time
+      responses:
+        '201':
+          description: Token is returned once and must be stored securely
+        '422':
+          description: Invalid name or expiration
+  /devices/{device}:
+    delete:
+      summary: Revoke a device token owned by the authenticated user
+      parameters:
+        - in: path
+          name: device
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Token revoked
+        '404':
+          description: Device not found for this user
+  /devices/{device}/queue:
+    get:
+      summary: Poll the authenticated device's unexpired queued tasks
+      description: Requires the path device ID to match the bearer token. Repeated delivery uses the same idempotency key and does not execute work.
+      parameters:
+        - in: path
+          name: device
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Queued payloads and idempotency keys
+        '403':
+          description: The bearer token is not the selected active device token
+  /device-queue:
+    get:
+      summary: List the owner's active and stale device queue entries
+      responses:
+        '200':
+          description: Owner-scoped queue entries; expired entries require confirmation
+  /device-queue/{queue}:
+    delete:
+      summary: Cancel an owner-scoped queue item and its pending task
+      parameters:
+        - in: path
+          name: queue
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Queue item cancelled
+        '404':
+          description: Queue item not found for this user
+        '409':
+          description: Queue item is no longer active
+  /device-queue/{queue}/reconfirm:
+    post:
+      summary: Explicitly reconfirm an expired device queue item
+      description: Owner confirmation renews its expiry for 24 hours; stale work is never delivered until reconfirmed.
+      parameters:
+        - in: path
+          name: queue
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirm]
+              properties:
+                confirm:
+                  type: boolean
+                  const: true
+      responses:
+        '200':
+          description: Queue item reconfirmed for a fresh 24-hour window
+        '409':
+          description: Item is no longer awaiting confirmation or device is unavailable
+  /admin/agent-specs/{agentName}/versions/{version}/lint:
+    get:
+      summary: Run advisory static checks on a versioned agent system prompt
+      description: Requires agent_specs.manage. Returns deterministic rule IDs, severity, and line numbers without returning or modifying the prompt. Findings never automatically activate, reject, or alter a specification.
+      parameters:
+        - in: path
+          name: agentName
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: version
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Prompt metrics, SHA-256, and advisory findings
+        '403':
+          description: Missing agent_specs.manage permission
+        '404':
+          description: Agent specification version not found
+  /tasks:
+    post:
+      summary: Submit a task, optionally holding it for a paired device
+      description: Device work is not dispatched to the cloud worker. The queue retains it until device polling or expiry; expired items require owner re-confirmation. This API foundation does not execute tasks on the device.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, prompt]
+              properties:
+                title:
+                  type: string
+                  maxLength: 255
+                prompt:
+                  type: string
+                  maxLength: 20000
+                requires_device:
+                  type: boolean
+                  default: false
+                device_token_id:
+                  type: integer
+                  description: Required when requires_device is true; must be an active device token owned by the caller.
+                queue_expires_at:
+                  type: string
+                  format: date-time
+                  description: Optional expiry, no more than 30 days from submission; defaults to 24 hours.
+                queue_priority:
+                  type: integer
+                  minimum: 0
+                  maximum: 5
+                  default: 0
+      responses:
+        '202':
+          description: Task queued normally or held for its registered device
+        '422':
+          description: Invalid or unowned device selection
+  /skills:
+    get:
+      summary: List built-in and workspace-available skill metadata
+      description: Skill instructions are progressively loaded only for matched, verified versions. Scripts are always disabled.
+      responses:
+        '200':
+          description: Skill metadata, owner controls, and installation safeguards
+    post:
+      summary: Create an owner-reviewed skill draft
+      description: External text must be explicitly submitted by the owner; no remote fetching or agent-initiated installation occurs.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, description, instructions]
+              properties:
+                name:
+                  type: string
+                  maxLength: 120
+                description:
+                  type: string
+                  maxLength: 1000
+                instructions:
+                  type: string
+                  minLength: 20
+                  maxLength: 20000
+                visibility:
+                  type: string
+                  enum: [personal, tenant]
+                source:
+                  type: string
+                  enum: [authored, external_upload]
+                external_install_confirmed:
+                  type: boolean
+                  description: Required true for external_upload.
+      responses:
+        '201':
+          description: Inactive draft with safety-scan findings and a SHA-256 content hash
+        '422':
+          description: Invalid manifest, missing owner confirmation, or size limit exceeded
+  /skills/drafts/from-task/{task}:
+    post:
+      summary: Suggest an editable skill draft from an owned successful task
+      description: Returns a deterministic template only. It does not copy the task description or result, save a skill, call an LLM, enable scripts, or grant capabilities. The owner must review and explicitly save the draft.
+      parameters:
+        - in: path
+          name: task
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Unsaved, personal-scope skill draft suggestion with PII-masked source task title
+        '404':
+          description: Task is not owned by the authenticated user
+        '422':
+          description: Task is not successfully completed
+  /skills/{skill}:
+    get:
+      summary: Read a visible skill and, for its owner, the current instructions
+      responses:
+        '404':
+          description: Skill is not visible in the caller's workspace
+    put:
+      summary: Create a new inactive version of an owned skill
+      description: Requires the current content hash; every edited version returns to pending review.
+      responses:
+        '200':
+          description: New unverified version
+        '422':
+          description: Stale hash or invalid skill manifest
+  /skills/{skill}/verify:
+    post:
+      summary: Explicitly verify and enable the current skill version
+      description: Requires owner confirmation and the exact content hash; unsafe scanner findings block activation.
+      responses:
+        '200':
+          description: Version verified and skill enabled
+        '422':
+          description: Hash mismatch or safety scan findings
+  /skills/{skill}/enabled:
+    put:
+      summary: Enable or disable an owned verified skill
+      responses:
+        '200':
+          description: Skill status updated
+        '422':
+          description: Current version has not been verified
+  /skills/{skill}/rollback/{version}:
+    post:
+      summary: Create a new review-required version from prior content
+      description: Rollback never bypasses safety scanning or owner verification.
+      responses:
+        '200':
+          description: New inactive version created
+        '404':
+          description: Version does not belong to the requested skill
+  /skills/{skill}/evaluations:
+    get:
+      summary: Read owned skill test cases, evaluation policy, and recent scores
+      responses:
+        '200':
+          description: Owner-only evaluation data; model outputs are not stored
+        '404':
+          description: Skill is not owned by the caller
+  /skills/{skill}/test-cases:
+    post:
+      summary: Add an owner-managed skill evaluation test case
+      description: Requires a reference answer or at least one literal must-include criterion. Maximum 20 cases per skill.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, prompt]
+              properties:
+                name:
+                  type: string
+                  maxLength: 120
+                prompt:
+                  type: string
+                  maxLength: 5000
+                reference_answer:
+                  type: string
+                  maxLength: 5000
+                criteria:
+                  type: array
+                  maxItems: 10
+                  items:
+                    type: string
+                    maxLength: 250
+      responses:
+        '201':
+          description: Evaluation test case created
+        '422':
+          description: Invalid test case or skill test case limit reached
+  /skills/{skill}/test-cases/{testCase}:
+    put:
+      summary: Update an owned skill evaluation test case
+      responses:
+        '200':
+          description: Evaluation test case updated
+        '404':
+          description: Test case does not belong to an owned skill
+    delete:
+      summary: Delete an owned skill evaluation test case
+      responses:
+        '200':
+          description: Test case deleted; historical evaluation results remain
+        '404':
+          description: Test case does not belong to an owned skill
+  /skills/{skill}/evaluation-policy:
+    put:
+      summary: Configure the owner's opt-in evaluation auto-disable threshold
+      description: Automatic deactivation is off by default. When enabled with a minimum score, only a below-threshold result for the current version can disable an active skill.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [auto_disable]
+              properties:
+                auto_disable:
+                  type: boolean
+                minimum_score:
+                  type: number
+                  minimum: 0
+                  maximum: 100
+      responses:
+        '200':
+          description: Owner evaluation policy updated
+        '422':
+          description: Automatic deactivation requires a minimum score
+  /skills/{skill}/evaluate:
+    post:
+      summary: Explicitly evaluate the current skill version
+      description: Uses the user's approved Research model with no tools or external fetches. Stores per-case token-F1/literal-criteria scores and token counts, never model outputs. These lexical scores are not semantic quality certifications. Evaluation can incur provider charges.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirm]
+              properties:
+                confirm:
+                  type: boolean
+                  enum: [true]
+      responses:
+        '200':
+          description: Evaluation score and per-case metrics
+        '422':
+          description: Confirmation missing or no test cases configured
+  /skills/{skill}/usage:
+    get:
+      summary: Read owner-only skill usage, outcomes, tokens, cost attribution, and version counts
+      description: Counts matched tasks and snapshots task outcomes, aggregated tokens, and priced costs. A multi-skill task's full cost is attributed to each matched skill and must not be summed across skills as a cost allocation.
+      responses:
+        '200':
+          description: Owner-scoped aggregate analytics without prompts or task content
+        '404':
+          description: Skill is not owned by the caller
+  /assistant/messages:
+    post:
+      summary: Send a message to the assistant
+      description: Greetings/help may be answered directly; other requests are sent through the task orchestrator.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                conversation_id:
+                  type: integer
+                content:
+                  type: string
+                  maxLength: 20000
+                task_brief_review_token:
+                  type: string
+                  maxLength: 4096
+      responses:
+        '200':
+          description: Direct assistant response
+        '202':
+          description: Task queued by the orchestrator
+        '422':
+          description: Review, validation, or safety gate requires action
+  /assistant/conversations:
+    get:
+      summary: List the authenticated user's synchronized conversations
+      responses:
+        '200':
+          description: Conversation summaries with pagination
+  /assistant/conversations/{conversation}:
+    get:
+      summary: Fetch a conversation and its messages
+      parameters:
+        - in: path
+          name: conversation
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Conversation state, including linked task status/results
+        '404':
+          description: Conversation not found for this user
+  /assistant/settings:
+    get:
+      summary: Fetch owner-scoped persona, voice, vision, and proactive preferences
+      responses:
+        '200':
+          description: Settings with camera, authentication, and smart-home safety defaults
+    put:
+      summary: Update owner-scoped assistant preferences
+      description: Voice is convenience only. Proactive briefing is opt-in and suggestions never start or approve tasks.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [persona, voice_input_enabled, voice_output_enabled, vision_enabled, smart_home_enabled]
+              properties:
+                persona:
+                  type: string
+                  enum: [friendly, concise, professional, custom]
+                voice_input_enabled:
+                  type: boolean
+                voice_output_enabled:
+                  type: boolean
+                voice_language:
+                  type: string
+                  enum: [bn-BD, en-US]
+                vision_enabled:
+                  type: boolean
+                smart_home_enabled:
+                  type: boolean
+                proactive_enabled:
+                  type: boolean
+                proactive_max_suggestions:
+                  type: integer
+                  minimum: 1
+                  maximum: 10
+                proactive_timezone:
+                  type: string
+      responses:
+        '200':
+          description: Preferences saved
+        '422':
+          description: Invalid preference values
+  /assistant/proactive/briefing:
+    get:
+      summary: Fetch the user's opt-in daily task briefing
+      description: Returns at most the configured number of unfinished owner tasks per local day; no task is executed or approved.
+      responses:
+        '200':
+          description: Owner-scoped suggestions or an explicit disabled state
+  /coding/proposals:
+    get:
+      summary: List code change proposals owned by the authenticated user
+      description: Proposals contain review metadata only; this API never applies diffs or executes commands.
+      responses:
+        '200':
+          description: Owner-scoped proposals and pagination
+    post:
+      summary: Submit a plan and diff for owner review
+      description: Credential-like content is rejected before storage; workspace_label is a display label, not a filesystem path.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [workspace_label, title, plan, diff]
+              properties:
+                task_id:
+                  type: integer
+                workspace_label:
+                  type: string
+                  maxLength: 120
+                title:
+                  type: string
+                  maxLength: 200
+                plan:
+                  type: string
+                  maxLength: 10000
+                diff:
+                  type: string
+                  maxLength: 100000
+      responses:
+        '201':
+          description: Secret-scanned proposal stored in pending review state
+        '422':
+          description: Invalid proposal or secret scan blocked storage
+  /coding/proposals/{proposal}:
+    get:
+      summary: Fetch an owner-scoped code change proposal
+      parameters:
+        - in: path
+          name: proposal
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Proposal plan and diff
+        '404':
+          description: Proposal not found for this user
+  /coding/proposals/{proposal}/approve:
+    post:
+      summary: Approve the exact pending proposal for review purposes
+      description: Approval records a decision only; no project file is changed and no command is run.
+      parameters:
+        - in: path
+          name: proposal
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Proposal review approved
+        '404':
+          description: Proposal not found for this user
+        '409':
+          description: Proposal is no longer pending or failed integrity/secret checks
+  /coding/proposals/{proposal}/reject:
+    post:
+      summary: Reject an owner-scoped pending code change proposal
+      parameters:
+        - in: path
+          name: proposal
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Proposal review rejected
+        '404':
+          description: Proposal not found for this user
+        '409':
+          description: Proposal is no longer pending or failed integrity/secret checks
+  /tasks/{task}/events/stream:
+    get:
+      summary: Stream owner-scoped task progress as Server-Sent Events
+      description: |
+        Reconnect with the Last-Event-ID header (or the after query parameter).
+        The stream is bounded to 20 seconds; clients reconnect to continue.
+      parameters:
+        - in: path
+          name: task
+          required: true
+          schema:
+            type: integer
+        - in: header
+          name: Last-Event-ID
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+        - in: query
+          name: after
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        '200':
+          description: text/event-stream progress events
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '404':
+          description: Task not found for this user
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: Sanctum

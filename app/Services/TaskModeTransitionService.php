@@ -23,6 +23,7 @@ class TaskModeTransitionService
         private readonly TaskCostEstimator $taskCostEstimator,
         private readonly UserLlmProviderResolver $providerResolver,
         private readonly TaskCostBudgetService $taskCostBudgetService,
+        private readonly AuditLogService $auditLogService,
     ) {}
 
     public function transitionToLive(User $user, int $taskId): JsonResponse
@@ -49,6 +50,8 @@ class TaskModeTransitionService
                     $prompt,
                     $agentSequence,
                     TASK_MODE_LIVE,
+                    null,
+                    $this->intakeComplexity($sourceTask),
                 );
 
                 if (($costEstimate['can_complete'] ?? true) === false) {
@@ -96,6 +99,14 @@ class TaskModeTransitionService
             ]);
 
             if ($blockedRequirements !== []) {
+                $this->auditLogService->record($user, 'task.mode_transition', $sourceTask, [
+                    'transition_id' => $transition->id,
+                    'from_mode' => $sourceTask->mode,
+                    'to_mode' => TASK_MODE_LIVE,
+                    'status' => 'blocked',
+                    'blocked_requirements' => $blockedRequirements,
+                ], $user);
+
                 return [
                     'transition' => $transition,
                     'task' => null,
@@ -145,6 +156,14 @@ class TaskModeTransitionService
             ]);
 
             $transition->update(['resulting_task_id' => $liveTask->id]);
+            $this->auditLogService->record($user, 'task.mode_transition', $sourceTask, [
+                'transition_id' => $transition->id,
+                'resulting_task_id' => $liveTask->id,
+                'from_mode' => TASK_MODE_SANDBOX,
+                'to_mode' => TASK_MODE_LIVE,
+                'status' => 'applied',
+            ], $user);
+
             RunAgentJob::dispatch(
                 $firstAgentRun->id,
                 $this->agentRegistry->timeoutSeconds($firstAgentName),
@@ -192,6 +211,10 @@ class TaskModeTransitionService
             $blockedRequirements[] = 'source_task_must_be_sandbox';
         }
 
+        if (($task->input['requires_device'] ?? false) === true) {
+            $blockedRequirements[] = 'local_device_runtime_unavailable';
+        }
+
         if ($task->status !== TASK_STATUS_COMPLETED) {
             $blockedRequirements[] = 'sandbox_task_must_complete';
         }
@@ -213,6 +236,8 @@ class TaskModeTransitionService
         if ($agentSequence === [] || in_array('', $agentSequence, true)) {
             $blockedRequirements[] = 'agent_route_missing';
         }
+
+        $intakeComplexity = $this->intakeComplexity($task);
 
         foreach ($agentSequence as $agentName) {
             $agentRun = $task->agentRuns->firstWhere('agent_name', $agentName);
@@ -236,6 +261,7 @@ class TaskModeTransitionService
                     null,
                     false,
                     $prompt,
+                    $intakeComplexity,
                 );
                 if (! is_string($testedFingerprint)) {
                     $blockedRequirements[] = "brain_settings_not_tested_for_{$agentName}";
@@ -250,6 +276,7 @@ class TaskModeTransitionService
                     null,
                     false,
                     $prompt,
+                    $intakeComplexity,
                 );
                 if (! $this->providerResolver->hasConfiguredCredentials($user, $modelSelection['provider'], $agentName)) {
                     $blockedRequirements[] = "credentials_missing_for_{$agentName}";
@@ -260,5 +287,15 @@ class TaskModeTransitionService
         }
 
         return array_values(array_unique($blockedRequirements));
+    }
+
+    private function intakeComplexity(Task $task): ?string
+    {
+        $taskBrief = $task->input['task_brief'] ?? [];
+        $complexity = is_array($taskBrief['complexity'] ?? null)
+            ? ($taskBrief['complexity']['level'] ?? null)
+            : null;
+
+        return is_string($complexity) ? $complexity : null;
     }
 }

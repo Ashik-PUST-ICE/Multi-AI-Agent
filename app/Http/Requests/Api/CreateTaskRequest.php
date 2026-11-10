@@ -3,6 +3,8 @@
 namespace App\Http\Requests\Api;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Support\Carbon;
+use Illuminate\Validation\Validator;
 
 class CreateTaskRequest extends FormRequest
 {
@@ -34,6 +36,42 @@ class CreateTaskRequest extends FormRequest
             'memory_ids' => ['sometimes', 'array', 'max:10'],
             'memory_ids.*' => ['required', 'integer', 'min:1', 'distinct'],
             'memory_context_hash' => ['sometimes', 'nullable', 'string', 'size:64', 'regex:/^[a-f0-9]{64}$/'],
+            'task_brief_review_token' => ['sometimes', 'string', 'max:4096'],
+            'requires_device' => ['sometimes', 'boolean'],
+            'device_token_id' => ['required_if:requires_device,true', 'integer', 'min:1'],
+            'queue_priority' => ['sometimes', 'integer', 'min:0', 'max:5'],
+            'queue_expires_at' => ['sometimes', 'date', 'after:now'],
+            'vision_image' => ['sometimes', 'nullable', 'image', 'mimes:jpeg,jpg,png,webp', 'max:3072'],
+            'vision_confirmed' => ['sometimes', 'accepted'],
+        ];
+    }
+
+    public function after(): array
+    {
+        return [
+            function (Validator $validator): void {
+                if (
+                    $this->hasFile('vision_image')
+                    && ! in_array($this->input('vision_confirmed'), ['yes', 'on', 1, '1', true, 'true'], true)
+                    && ! $validator->errors()->has('vision_confirmed')
+                ) {
+                    $validator->errors()->add('vision_confirmed', 'Explicit confirmation is required before uploading an image.');
+                }
+                $requiresDevice = in_array($this->input('requires_device'), [true, 1, '1', 'true'], true);
+                if (! $requiresDevice && ($this->exists('device_token_id') || $this->exists('queue_expires_at') || $this->exists('queue_priority'))) {
+                    $validator->errors()->add('requires_device', 'Device queue options require requires_device=true.');
+                }
+                if ($requiresDevice && $this->filled('queue_expires_at')) {
+                    try {
+                        $expiry = Carbon::parse($this->input('queue_expires_at'));
+                        if ($expiry->greaterThan(now()->addDays(30))) {
+                            $validator->errors()->add('queue_expires_at', 'Device queue entries may expire no more than 30 days from now.');
+                        }
+                    } catch (\Throwable) {
+                        // The date rule reports invalid date input.
+                    }
+                }
+            },
         ];
     }
 }

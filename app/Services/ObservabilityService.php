@@ -82,9 +82,24 @@ class ObservabilityService
                 $attributes['llm.cost.amount'] = (float) $payload['cost']['amount'];
                 $attributes['llm.cost.currency'] = mb_substr($payload['cost']['currency'], 0, 10);
             }
-            if (in_array($event->event_type, ['agent.failed', 'tool.failed', 'task.failed', 'observability.silent_failure', 'observability.stagnation_detected'], true)) {
+            $failureEvents = [
+                'agent.failed',
+                'tool.failed',
+                'task.failed',
+                'skeptic.rejected',
+                'evaluation.failed',
+                'observability.silent_failure',
+                'observability.stagnation_detected',
+            ];
+            if (in_array($event->event_type, $failureEvents, true)) {
                 $attributes['failure.category'] = $this->failureCategory($event->event_type, $payload);
             }
+            $failed = str_ends_with($event->event_type, '.failed')
+                || in_array($event->event_type, [
+                    'skeptic.rejected',
+                    'observability.silent_failure',
+                    'observability.stagnation_detected',
+                ], true);
 
             $spans[] = $this->span(
                 (string) $event->trace_id,
@@ -94,8 +109,7 @@ class ObservabilityService
                 $start,
                 $end,
                 $this->attributes($attributes),
-                str_ends_with($event->event_type, '.failed')
-                    || in_array($event->event_type, ['observability.silent_failure', 'observability.stagnation_detected'], true),
+                $failed,
             );
         }
 
@@ -129,6 +143,7 @@ class ObservabilityService
             ->whereIn('event_type', [
                 'agent.failed',
                 'tool.failed',
+                'skeptic.rejected',
                 'observability.silent_failure',
                 'observability.stagnation_detected',
             ])
@@ -192,11 +207,11 @@ class ObservabilityService
 
         return match (true) {
             str_contains($description, 'budget'), str_contains($description, 'cost'), str_contains($description, 'token limit') => 'cost',
-            str_contains($description, 'specification'), str_contains($description, 'schema'), str_contains($description, 'validation') => 'validation',
             str_contains($description, 'trust'), str_contains($description, 'kill switch'), str_contains($description, 'security'), str_contains($description, 'approval') => 'security',
-            str_contains($description, 'provider'), str_contains($description, 'connection'), str_contains($description, 'model request') => 'provider',
-            str_contains($description, 'tool.') => 'tool',
-            str_contains($description, 'handoff'), str_contains($description, 'envelope'), str_contains($description, 'orchestrat') => 'coordination',
+            str_contains($description, 'skeptic'), str_contains($description, 'evaluation'), str_contains($description, 'criteria'), str_contains($description, 'verification') => 'verification',
+            str_contains($description, 'specification'), str_contains($description, 'schema'), str_contains($description, 'validation') => 'spec',
+            str_contains($description, 'provider'), str_contains($description, 'connection'), str_contains($description, 'model request'), str_contains($description, 'tool.'),
+            str_contains($description, 'handoff'), str_contains($description, 'envelope'), str_contains($description, 'orchestrat'), str_contains($description, 'coordination') => 'coordination',
             default => 'other',
         };
     }

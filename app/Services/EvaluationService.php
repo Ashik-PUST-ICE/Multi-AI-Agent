@@ -45,13 +45,17 @@ class EvaluationService
     public function data(User $user): array
     {
         $approvedModels = $user->llmSettings?->approved_models ?? [];
+        $agentNames = AgentSpec::query()
+            ->distinct()
+            ->pluck('agent_name')
+            ->merge(EvaluationCase::query()->distinct()->pluck('agent_name'))
+            ->unique()
+            ->values()
+            ->all();
         $models = array_map(fn (array $model): array => [
             'provider' => $model['provider'],
             'model' => $model['model'],
-            'credentials_configured_by_agent' => array_fill_keys(
-                ['Orchestrator', 'Research', 'Writer', 'Reviewer', 'Skeptic'],
-                false,
-            ),
+            'credentials_configured_by_agent' => array_fill_keys($agentNames, false),
         ], $approvedModels);
         foreach ($models as &$model) {
             foreach (array_keys($model['credentials_configured_by_agent']) as $agentName) {

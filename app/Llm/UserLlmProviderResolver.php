@@ -22,8 +22,17 @@ class UserLlmProviderResolver
         string $agentName,
         string $mode = TASK_MODE_SANDBOX,
         ?string $prompt = null,
+        ?string $intakeComplexity = null,
     ): array {
-        $modelSelection = $this->routingDecision($user, $agentName, $mode, null, true, $prompt);
+        $modelSelection = $this->routingDecision(
+            $user,
+            $agentName,
+            $mode,
+            null,
+            true,
+            $prompt,
+            $intakeComplexity,
+        );
         $providerId = $modelSelection['provider'];
         $modelId = $modelSelection['model'];
 
@@ -126,6 +135,7 @@ class UserLlmProviderResolver
         ?string $brainModeOverride = null,
         bool $requireConfiguredCredentials = false,
         ?string $prompt = null,
+        ?string $intakeComplexity = null,
     ): array {
         return $this->routingDecision(
             $user,
@@ -134,6 +144,7 @@ class UserLlmProviderResolver
             $brainModeOverride,
             $requireConfiguredCredentials,
             $prompt,
+            $intakeComplexity,
         );
     }
 
@@ -147,6 +158,7 @@ class UserLlmProviderResolver
         ?string $brainModeOverride = null,
         bool $requireConfiguredCredentials = false,
         ?string $prompt = null,
+        ?string $intakeComplexity = null,
     ): array {
         $excludedModels = [];
         if ($agentName === 'Skeptic') {
@@ -157,6 +169,8 @@ class UserLlmProviderResolver
                 null,
                 $requireConfiguredCredentials,
                 $prompt,
+                [],
+                $intakeComplexity,
             );
             $excludedModels[] = [
                 'provider' => $writerSelection['provider'],
@@ -179,6 +193,7 @@ class UserLlmProviderResolver
             $requireConfiguredCredentials,
             $prompt,
             $excludedModels,
+            $intakeComplexity,
         );
 
         if ($agentName === 'Skeptic') {

@@ -10,7 +10,7 @@ use App\Models\User;
 use App\Services\AgentRunService;
 use App\Services\IntakeAnalyzer;
 use App\Services\SkillMatcher;
-use Illuminate\Foundation\Testing\DatabaseMigrations;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Laravel\Sanctum\Sanctum;
@@ -19,7 +19,7 @@ use Tests\TestCase;
 
 class TaskOrchestrationApiTest extends TestCase
 {
-    use DatabaseMigrations;
+    use RefreshDatabase;
 
     public function test_task_submission_is_authenticated_and_queues_the_routed_agent_run(): void
     {
@@ -34,11 +34,18 @@ class TaskOrchestrationApiTest extends TestCase
         $user = User::factory()->create();
         Sanctum::actingAs($user);
 
-        $this->getJson('/api/v1/skills')->assertOk()
+        $skillCatalog = $this->getJson('/api/v1/skills')->assertOk()
             ->assertJsonPath('maximum_matches_per_task', 2)
-            ->assertJsonPath('external_installation_enabled', false)
-            ->assertJsonPath('skills.0.owner', 'built_in')
-            ->assertJsonPath('skills.0.scripts_enabled', false);
+            ->assertJsonPath('external_installation_enabled', true)
+            ->assertJsonPath('external_installation_requires_owner_action', true)
+            ->assertJsonPath('remote_fetch_enabled', false)
+            ->json('skills');
+        $this->assertNotEmpty($skillCatalog);
+        foreach ($skillCatalog as $skill) {
+            $this->assertSame('built_in', $skill['owner']);
+            $this->assertFalse($skill['scripts_enabled']);
+            $this->assertArrayNotHasKey('instructions', $skill);
+        }
 
         $this->postJson('/api/v1/tasks', [
             'title' => 'Research task',
@@ -118,6 +125,11 @@ class TaskOrchestrationApiTest extends TestCase
         $this->assertSame([], $skills[0]['required_tools']);
         $this->assertCount(count($skills), $matcher->summaries($skills));
         $this->assertArrayNotHasKey('instructions', $matcher->summaries($skills)[0]);
+        $researchSkills = $matcher->match(
+            'Research a topic.',
+            app(IntakeAnalyzer::class)->analyze('Research a topic.'),
+        );
+        $this->assertSame(['research-brief'], array_column($researchSkills, 'name'));
     }
 
     public function test_only_explicitly_selected_unchanged_memories_enter_a_task_context(): void
@@ -174,6 +186,32 @@ class TaskOrchestrationApiTest extends TestCase
         $this->assertSame([], $task->input['knowledge_context']);
     }
 
+    public function test_deleted_memory_cannot_be_used_from_a_stale_task_estimate(): void
+    {
+        $user = $this->userWithApprovedProvider();
+        Sanctum::actingAs($user);
+        $memory = $user->memories()->create([
+            'type' => USER_MEMORY_TYPE_LONG_TERM,
+            'label' => 'Sensitive note',
+            'content' => 'Use only while it remains available.',
+        ]);
+        $estimate = $this->postJson('/api/v1/tasks/estimate', [
+            'prompt' => 'Use the selected note.',
+            'memory_ids' => [$memory->id],
+        ])->assertOk();
+
+        $this->deleteJson("/api/v1/memories/{$memory->id}")->assertOk();
+        $this->postJson('/api/v1/tasks', [
+            'title' => 'Stale memory preview',
+            'prompt' => 'Use the selected note.',
+            'memory_ids' => [$memory->id],
+            'memory_context_hash' => $estimate->json('memory_preview.hash'),
+        ])->assertUnprocessable()
+            ->assertJsonValidationErrors('memory_ids');
+
+        $this->assertDatabaseCount('tasks', 0);
+    }
+
     public function test_task_estimate_requires_authentication_and_explains_single_or_multi_agent_routing(): void
     {
         $this->postJson('/api/v1/tasks/estimate', [
@@ -197,6 +235,18 @@ class TaskOrchestrationApiTest extends TestCase
         ])->assertOk()
             ->assertJsonPath('routing.strategy', 'multi_agent')
             ->assertJsonPath('routing.agent_sequence', ['Orchestrator', 'Research', 'Writer', 'Reviewer', 'Skeptic']);
+    }
+
+    public function test_task_brief_complexity_is_passed_to_model_router_estimates(): void
+    {
+        $user = $this->userWithApprovedProvider();
+        Sanctum::actingAs($user);
+
+        $this->postJson('/api/v1/tasks/estimate', [
+            'prompt' => 'Write a memo then then',
+        ])->assertOk()
+            ->assertJsonPath('task_brief.complexity.level', 'moderate')
+            ->assertJsonPath('routing_cost_comparison.auto.agents.0.complexity', 'moderate');
     }
 
     public function test_single_agent_task_executes_and_returns_its_answer(): void

@@ -6,6 +6,7 @@ use App\Agents\AgentRegistry;
 use App\Llm\CustomBaseUrlPolicy;
 use App\Llm\ProviderCatalog;
 use App\Llm\ProviderFactory;
+use App\Models\AgentSpec;
 use App\Models\User;
 use App\Traits\ResponseTrait;
 use Illuminate\Http\JsonResponse;
@@ -69,6 +70,11 @@ class ProviderSettingsService
             ]),
             'keys' => $keyStatuses,
             'legacy_keys' => $legacyKeyStatuses,
+            'agents' => AgentSpec::query()
+                ->where('status', AGENT_SPEC_STATUS_ACTIVE)
+                ->distinct()
+                ->orderBy('agent_name')
+                ->pluck('agent_name'),
             'catalog' => $this->catalog->publicCatalog(),
         ];
 

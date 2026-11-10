@@ -103,10 +103,14 @@ class IntakeAnalyzer
             $reasons[] = 'financial_action_possible';
             $neverAuto[] = 'financial_action';
         }
+        if (preg_match('/\b(delete|remove|destroy|format|drop|truncate)\b|মুছ|ধ্বংস কর|ফরম্যাট কর/u', $prompt) === 1) {
+            $reasons[] = 'destructive_action_possible';
+            $neverAuto[] = 'destructive_action';
+        }
         if (preg_match('/\b(password|secret|credential|api key|medical|diagnosis|legal advice)\b|পাসওয়ার্ড|গোপন তথ্য|চিকিৎসা/u', $prompt) === 1) {
             $reasons[] = 'sensitive_information_or_advice';
         }
-        if (preg_match('/\b(lock|stove|gas|door lock)\b|তালা|চুলা|গ্যাস/u', $prompt) === 1) {
+        if (preg_match('/\b(lock|unlock|stove|gas|door lock)\b|তালা|চুলা|গ্যাস/u', $prompt) === 1) {
             $reasons[] = 'physical_device_action_possible';
             $neverAuto[] = 'physical_safety_device';
         }

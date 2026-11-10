@@ -3,15 +3,25 @@
 namespace App\Models;
 
 use App\Models\Concerns\BelongsToTenant;
+use App\Services\SkillUsageService;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\Storage;
+use RuntimeException;
 
 class Task extends Model
 {
     use BelongsToTenant;
     use SoftDeletes;
+
+    protected $hidden = [
+        'vision_image_path',
+        'vision_image_mime_type',
+        'vision_image_expires_at',
+    ];
 
     protected $attributes = [
         'status' => TASK_STATUS_PENDING,
@@ -42,6 +52,7 @@ class Task extends Model
             'result' => 'array',
             'started_at' => 'datetime',
             'completed_at' => 'datetime',
+            'vision_image_expires_at' => 'datetime',
         ];
     }
 
@@ -57,9 +68,27 @@ class Task extends Model
             }
         });
 
+        static::created(function (self $task): void {
+            app(SkillUsageService::class)->recordSubmission($task);
+        });
+
+        static::updated(function (self $task): void {
+            if ($task->wasChanged('status')
+                && in_array($task->status, [TASK_STATUS_COMPLETED, TASK_STATUS_FAILED, TASK_STATUS_CANCELLED], true)) {
+                app(SkillUsageService::class)->recordTerminalOutcome($task);
+            }
+        });
+
         static::updating(function (self $task): void {
             if ($task->isDirty('mode')) {
                 throw new \LogicException('A task mode is immutable; use the explicit Sandbox-to-Live transition.');
+            }
+        });
+
+        static::deleting(function (self $task): void {
+            if ($task->vision_image_path !== null
+                && ! Storage::disk('local')->delete($task->vision_image_path)) {
+                throw new RuntimeException('The private camera image could not be deleted with its task.');
             }
         });
     }
@@ -104,8 +133,18 @@ class Task extends Model
         return $this->hasMany(ModeTransition::class);
     }
 
+    public function skillUsages(): HasMany
+    {
+        return $this->hasMany(UserSkillUsage::class);
+    }
+
     public function scheduledRun(): BelongsTo
     {
         return $this->belongsTo(ScheduledTaskRun::class, 'scheduled_task_run_id');
+    }
+
+    public function deviceQueueEntry(): HasOne
+    {
+        return $this->hasOne(DeviceTaskQueueEntry::class);
     }
 }

@@ -47,10 +47,18 @@ package-lock.json
 /tests/Feature/*
 !/tests/Feature/TaskRoutingAndBudgetTest.php
 !/tests/Feature/TaskOrchestrationApiTest.php
+!/tests/Feature/SkillRegistryApiTest.php
 !/tests/Feature/AgentPackApiTest.php
 !/tests/Feature/SecurityControlApiTest.php
 !/tests/Feature/ProviderSettingsApiTest.php
 !/tests/Feature/UserLlmProviderResolverTest.php
+!/tests/Feature/KnowledgeApiTest.php
+!/tests/Feature/TaskModeTransitionApiTest.php
+!/tests/Feature/FlightRecorderApiTest.php
+!/tests/Feature/AgentFrameworkTest.php
+!/tests/Feature/AssistantExperienceApiTest.php
+!/tests/Feature/BootstrapAdminAccountsSeederTest.php
+!/tests/Feature/AgentPromptLinterTest.php
 
 composer.lock
 !/composer.lock

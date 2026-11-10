@@ -2,6 +2,7 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
@@ -20,6 +21,15 @@ return new class extends Migration
 
     public function down(): void
     {
+        $hasMultipleAgentCredentials = DB::table('user_api_keys')
+            ->select('user_id', 'provider')
+            ->groupBy('user_id', 'provider')
+            ->havingRaw('COUNT(*) > 1')
+            ->exists();
+        if ($hasMultipleAgentCredentials) {
+            throw new RuntimeException('Agent-scoped credentials cannot be merged safely during rollback.');
+        }
+
         Schema::table('user_api_keys', function (Blueprint $table): void {
             $table->dropUnique('user_api_keys_user_agent_provider_unique');
             $table->dropColumn('agent_name');
